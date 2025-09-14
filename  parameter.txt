@@ -1,0 +1,61 @@
+{
+  // Tỉ lệ vị trí vạch tím (ROI) theo chiều cao khung hình (0.0 - 1.0)
+  "purple_ratio": 0.50,
+
+  // Tỉ lệ vị trí vạch xanh (đếm phương tiện) theo chiều cao khung hình (0.0 - 1.0)
+  "blue_ratio": 0.875,
+
+  // Ngưỡng xác suất nhận diện; bỏ các box có độ tin cậy thấp hơn giá trị này (0.0 - 1.0)
+  "conf_thresh": 0.50,
+
+  // Danh sách lớp đối tượng được phép tính (phải trùng tên lớp của mô hình YOLO)
+  "allowed_classes": ["car", "truck", "bus", "motorbike", "motorcycle", "bicycle"],
+
+  // Biên độ hysteresis xung quanh vạch xanh để chống nhiễu (tỉ lệ theo chiều cao ảnh)
+  "line_margin_factor": 0.015,
+
+  // Mức dịch chuyển tối thiểu theo frame để được tính là di chuyển (tỉ lệ theo chiều cao ảnh)
+  "min_delta_factor": 0.005,
+
+  // Độ dày khung vẽ bounding box
+  "box_thickness": 2,
+
+  // Độ dày các đường kẻ (vạch tím, xanh, quỹ đạo)
+  "line_thickness": 2,
+
+  // Tỉ lệ kích cỡ chữ hiển thị
+  "text_scale": 0.8,
+
+  // Độ dày chữ hiển thị
+  "text_thickness": 2,
+
+  // Độ dài tối đa của quỹ đạo (số điểm lịch sử lưu lại)
+  "trail_max_len": 10,
+
+  // Cửa sổ trượt để tính mật độ (tính trên số frame đã xử lý, không phải frame gốc)
+  "density_window": 10,
+
+  // Lấy 1 frame mỗi N giây theo thời gian của video (0 = tắt, xử lý mọi frame theo --fps)
+  "sample_interval_sec": 1.0,
+
+  // Ngưỡng IOU cho tracker (mức chồng lấp tối thiểu để gán theo dõi)
+  "tracker_iou_threshold": 0.35,
+
+  // Khoảng cách tối đa (pixel) để gán track giữa các frame
+  "tracker_max_distance": 50.0,
+
+  // Số frame cho phép bị mất trước khi huỷ một track
+  "tracker_max_missed": 12,
+
+  // Hệ số làm mượt quỹ đạo (0.0 - 1.0, càng cao càng mượt nhưng chậm thay đổi)
+  "tracker_smooth_alpha": 0.25,
+
+  // Bật dự đoán vị trí tiếp theo cho tracker
+  "tracker_use_prediction": true,
+
+  // Hệ số làm mượt vận tốc (0.0 - 1.0)
+  "tracker_velocity_alpha": 0.6,
+
+  // Tốc độ tối đa (pixel/frame) để loại bỏ outlier
+  "tracker_max_speed": 80.0
+}
