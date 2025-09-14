@@ -24,6 +24,8 @@ DEFAULT_CFG: Dict[str, object] = {
     "text_thickness": 1,
     "trail_max_len": 50,
     "density_window": 10,
+    # sampling: process only one frame every N seconds (video-time). 0 disables sampling.
+    "sample_interval_sec": 1.0,
     # tracker defaults
     "tracker_iou_threshold": 0.2,
     "tracker_max_distance": 60.0,
@@ -45,6 +47,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument('--show', action='store_true', help='Show a GUI window with detection results')
     parser.add_argument('--letterbox', action='store_true', help='Use YOLO letterbox (keep aspect ratio with padding) for preprocessing')
     parser.add_argument('--config', type=str, default=None, help='Path to JSON config file for runtime parameters')
+    # If provided, overrides config key 'sample_interval_sec'. Example: --sample-interval 1.0 -> process 1 frame per second
+    parser.add_argument('--sample-interval', type=float, default=None, help='Seconds between processed frames (video-time). 0 or None disables sampling')
     return parser
 
 

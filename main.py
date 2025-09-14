@@ -60,6 +60,13 @@ def main():
 
         # Load runtime configuration (defaults + optional JSON override)
         cfg = load_runtime_config(args)
+        # CLI override for sampling interval if provided
+        if getattr(args, 'sample_interval', None) is not None:
+            try:
+                cfg['sample_interval_sec'] = max(0.0, float(args.sample_interval))
+            except Exception:
+                logger.warning("Invalid --sample-interval; falling back to config/default")
+
         processor = YOLOProcessor(args.weights, 'cpu')
         # Configure preprocessing behavior
         if getattr(args, 'letterbox', False):
@@ -77,11 +84,18 @@ def main():
         logger.info(f"Video: {total_frames} frames @ {original_fps:.1f} FPS")
 
         frame_interval = 1.0 / args.fps
+        # Determine sampling step in frames (process one frame every N seconds of video time)
+        sample_interval_sec = float(cfg.get('sample_interval_sec', 0.0) or 0.0)
+        if original_fps and original_fps > 0:
+            sample_step = max(1, int(round(sample_interval_sec * original_fps))) if sample_interval_sec > 0 else 1
+        else:
+            # fallback if FPS unknown
+            sample_step = 1 if sample_interval_sec <= 0 else max(1, int(round(sample_interval_sec * 30.0)))
 
         metric_logger = MetricLogger()
         metric_logger.open()
 
-        frame_count = 0
+        frame_count = 0  # processed frames count
         total_inference_time = 0
         start_time = time.time()
 
@@ -220,7 +234,8 @@ def main():
                 continue
 
             elapsed = time.time() - loop_start
-            if elapsed < frame_interval:
+            # Only throttle by target FPS when not using sampling-by-time
+            if sample_step == 1 and elapsed < frame_interval:
                 time.sleep(frame_interval - elapsed)
 
             total_time = time.time() - loop_start
@@ -234,7 +249,12 @@ def main():
                                 ram_mb=ram_usage)
 
             if show_progress:
-                progress_bar = print_progress_bar(frame_count, total_frames)
+                # Use current position in the stream for progress (accounts for skipped frames)
+                try:
+                    current_pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+                except Exception:
+                    current_pos = frame_count
+                progress_bar = print_progress_bar(current_pos, total_frames)
                 avg_inference = total_inference_time / frame_count * 1000
 
                 cpu_line = f"SysCPU: {system_cpu:.0f}%"
@@ -252,6 +272,16 @@ def main():
                     print(f"\n[Frame {frame_count}] Avg inference: {avg_inference:.1f}ms, Current FPS: {current_fps:.1f}, System CPU: {system_cpu:.1f}%, Affinity CPU: {affinity_cpu:.1f}% (cores {used_cores})")
                 else:
                     print(f"\n[Frame {frame_count}] Avg inference: {avg_inference:.1f}ms, Current FPS: {current_fps:.1f}, System CPU: {system_cpu:.1f}%")
+
+            # Skip intermediate frames if sampling is enabled (process one frame every N seconds)
+            if sample_step > 1:
+                to_skip = sample_step - 1
+                skipped = 0
+                while skipped < to_skip:
+                    grabbed = cap.grab()
+                    if not grabbed:
+                        break
+                    skipped += 1
 
     except KeyboardInterrupt:
         print("\n" + "=" * 60)
