@@ -49,6 +49,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument('--config', type=str, default=None, help='Path to JSON config file for runtime parameters')
     # If provided, overrides config key 'sample_interval_sec'. Example: --sample-interval 1.0 -> process 1 frame per second
     parser.add_argument('--sample-interval', type=float, default=None, help='Seconds between processed frames (video-time). 0 or None disables sampling')
+    parser.add_argument("--prototxt", required=False,help="path to Caffe 'deploy' prototxt file")
     return parser
 
 

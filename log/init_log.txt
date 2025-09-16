@@ -1,16 +1,8 @@
 === ENHANCED INIT CONFIG ===
-Source: videos/traffic_1080_1920_30fps.mp4
-Weights: models/yolov8n.pt
+Source: videos/GT1.MP4
+Weights: models/MobileNetSSD_deploy.caffemodel
 Target FPS: 5.0
 Image size: 1080
 CPU physical cores: 4
 CPU logical threads: 4
 Used cores: [0, 1, 2, 3]
-Model stride: 32
-Model classes: 80
-Device: cpu
-PyTorch version: 2.8.0+cpu
-OpenCV version: 4.12.0
-Ultralytics version: 8.3.195
-Available RAM: 7.6 GB
-CPU frequency: 1800 MHz

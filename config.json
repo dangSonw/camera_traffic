@@ -11,7 +11,7 @@
   "text_thickness": 2,
   "trail_max_len": 10,
   "density_window": 10,
-  "sample_interval_sec": 0.3,
+  "sample_interval_sec": 1.0,
 
   "tracker_iou_threshold": 0.25,
   "tracker_max_distance": 50.0,

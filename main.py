@@ -52,7 +52,6 @@ def main():
         logger.error(f"Source video not found: {args.source}")
         return 1
 
-    processor = None
     cap = None
 
     try:
@@ -67,11 +66,16 @@ def main():
             except Exception:
                 logger.warning("Invalid --sample-interval; falling back to config/default")
 
-        processor = YOLOProcessor(args.weights, 'cpu')
+        # load our serialized model from disk
+        #processor = YOLOProcessor(args.weights, 'cpu')
+        processor = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
+        # processor.last_input_bgr = None
+        # processor.use_letterbox = False
+        
         # Configure preprocessing behavior
         if getattr(args, 'letterbox', False):
             setattr(processor, 'use_letterbox', True)
-        write_init_log(args, used_cores, processor)
+        # write_init_log(args, used_cores, processor)
         monitor = SystemMonitor(used_cores)
 
         cap = cv2.VideoCapture(args.source)
@@ -157,9 +161,20 @@ def main():
                 frame_for_model[:purple_src_y, :] = 0  # black out above purple line for model
 
                 inference_start = time.time()
-                im = processor.preprocess_frame(frame_for_model, imgsz=args.imgsz)
-                in_shape = im.shape[2:]  # (h, w) of network input
-                pred = processor.inference(im)
+
+
+                (h, w) = frame_for_model.shape[:2]
+                resized_input = cv2.resize(frame_for_model, (300, 300), interpolation=cv2.INTER_LINEAR)
+                blob = cv2.dnn.blobFromImage(resized_input, 0.007843, (300, 300), 127.5)
+                
+                # lưu ảnh BGR đã resize vào thuộc tính last_input_bgr để phần vẽ/hiển thị dùng chung kích thước
+                processor.last_input_bgr = resized_input
+                
+                processor.setInput(blob)
+                pred = processor.forward()
+
+
+
                 inference_time = time.time() - inference_start
                 total_inference_time += inference_time
 
@@ -172,23 +187,22 @@ def main():
 
                 # Parse detections, filter to vehicle-like classes and reasonable confidence
                 rects: List[Tuple[int, int, int, int]] = []
-                det = pred[0] if pred and len(pred) > 0 else None
-                if det is not None and len(det):
-                    det_np = det.detach().cpu().numpy()
-                    allowed = set(a.lower() for a in cfg.get("allowed_classes", []))
-                    for *xyxy, conf, cls_id in det_np:
-                        cls_id = int(cls_id)
-                        name = processor.names[cls_id] if processor.names and cls_id < len(processor.names) else str(cls_id)
-                        if allowed and name.lower() not in allowed:
-                            continue
-                        if conf < float(cfg.get("conf_thresh", 0.30)):
-                            continue
-                        x1, y1, x2, y2 = map(int, xyxy)
-                        w = max(0, x2 - x1)
-                        h = max(0, y2 - y1)
-                        if w <= 2 or h <= 2:
-                            continue
-                        rects.append((x1, y1, w, h))
+                (h, w) = frame.shape[:2]
+                for i in range(pred.shape[2]):
+                    confidence = pred[0, 0, i, 2]
+                    if confidence > float(cfg.get("conf_thresh", 0.30)):
+                        class_id = int(pred[0, 0, i, 1])
+                        # Lọc class nếu cần
+                        allowed = set(a.lower() for a in cfg.get("allowed_classes", []))
+                        if allowed:
+                            # MobileNetSSD mặc định có CLASSES 21 nhãn VOC
+                            CLASSES = ["bicycle", "bus", "car", "motorbike", "person",]
+                            name = CLASSES[class_id] if class_id < len(CLASSES) else str(class_id)
+                            if name.lower() not in allowed:
+                                continue
+                        box = pred[0, 0, i, 3:7] * np.array([w, h, w, h])
+                        (x1, y1, x2, y2) = box.astype("int")
+                        rects.append((x1, y1, x2 - x1, y2 - y1))
 
                 # Lines on canvas space
                 H, W = canvas.shape[:2]
@@ -225,7 +239,8 @@ def main():
                         pass
 
                 # Release tensor and clear cache
-                del im
+                if 'im' in locals():
+                    del im
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
@@ -294,8 +309,8 @@ def main():
     finally:
         if cap:
             cap.release()
-        if processor:
-            processor.cleanup()
+        # if processor:
+        #     processor.cleanup()
         try:
             if 'args' in locals() and getattr(args, 'show', False):
                 cv2.destroyAllWindows()
