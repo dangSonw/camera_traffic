@@ -1,15 +1,46 @@
 {
-  "purple_ratio": 0.50,
-  "blue_ratio": 0.875,
-  "conf_thresh": 0.50,
-  "allowed_classes": ["car", "truck", "bus", "motorbike", "motorcycle", "bicycle", "person"],
-  "line_margin_factor": 0.015,
-  "min_delta_factor": 0.005,
-  "box_thickness": 2,
-  "line_thickness": 2,
-  "text_scale": 0.8,
-  "text_thickness": 2,
-  "trail_max_len": 10,
-  "density_window": 10,
-  "sample_interval_sec": 1.0
+  "model": {
+    "input_width": 300,
+    "input_height": 300,
+    "roi": {
+      "enabled": true,
+      "x": 0.2,
+      "y": 0.1,
+      "width": 0.6,
+      "height": 0.8,
+      "color": [0, 255, 0],
+      "thickness": 2
+    },
+    "scale_factor": 0.00784313725490196,
+    "mean_values": [127.5, 127.5, 127.5],
+    "swap_rb": true,
+    "crop": false,
+    "classes": ["background", "aeroplane", "bicycle", "bird", "boat",
+                "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
+                "dog", "horse", "motorbike", "person", "pottedplant",
+                "sheep", "sofa", "train", "tvmonitor"]
+  },
+  "detection": {
+    "conf_thresh": 0.50,
+    "allowed_classes": ["car", "bus", "motorbike", "bicycle", "person"],
+    "nms_threshold": 0.4
+  },
+  "display": {
+    "purple_ratio": 0.50,
+    "blue_ratio": 0.875,
+    "line_margin_factor": 0.015,
+    "min_delta_factor": 0.005,
+    "box_thickness": 2,
+    "line_thickness": 2,
+    "text_scale": 0.8,
+    "text_thickness": 2,
+    "trail_max_len": 10
+  },
+  "tracking": {
+    "density_window": 10
+  },
+  "performance": {
+    "sample_interval_sec": 1.0,
+    "target_fps": 10.0
+  }
 }

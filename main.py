@@ -134,18 +134,49 @@ def main():
             show_progress = frame_count <= 10 or frame_count % 10 == 0
 
             try:
-                # Preprocess frame for MobileNetSSD
+                # Preprocess frame according to model requirements
                 inference_start = time.time()
                 (h, w) = frame.shape[:2]
                 
-                # Create blob from image with mean subtraction and scaling
+                # Get model configuration
+                model_cfg = cfg.get('model', {})
+                roi_cfg = model_cfg.get('roi', {})
+                input_width = model_cfg.get('input_width', 300)
+                input_height = model_cfg.get('input_height', 300)
+                
+                # Calculate ROI coordinates
+                if roi_cfg.get('enabled', False):
+                    # Calculate ROI in pixels
+                    roi_x = int(roi_cfg['x'] * w)
+                    roi_y = int(roi_cfg['y'] * h)
+                    roi_w = int(roi_cfg['width'] * w)
+                    roi_h = int(roi_cfg['height'] * h)
+                    
+                    # Extract ROI from frame
+                    roi_frame = frame[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
+                    
+                    # Draw ROI rectangle on the original frame
+                    color = roi_cfg.get('color', [0, 255, 0])  # Default green
+                    thickness = roi_cfg.get('thickness', 2)
+                    cv2.rectangle(frame, (roi_x, roi_y), 
+                                (roi_x + roi_w, roi_y + roi_h), 
+                                color, thickness)
+                else:
+                    # Use full frame if ROI is disabled
+                    roi_frame = frame
+                    roi_x, roi_y = 0, 0
+                
+                # Resize ROI to model input size
+                resized_roi = cv2.resize(roi_frame, (input_width, input_height))
+                
+                # Create blob from ROI
                 blob = cv2.dnn.blobFromImage(
-                    frame, 
-                    scalefactor=1.0/127.5,  # Scale pixel values to [0,1]
-                    size=(300, 300),        # Input size for MobileNetSSD
-                    mean=(127.5, 127.5, 127.5),  # Mean subtraction
-                    swapRB=True,             # BGR to RGB
-                    crop=False               # Don't crop, will maintain aspect ratio
+                    resized_roi,
+                    scalefactor=model_cfg.get('scale_factor', 0.00784313725490196),
+                    size=(input_width, input_height),
+                    mean=tuple(model_cfg.get('mean_values', [127.5, 127.5, 127.5])),
+                    swapRB=model_cfg.get('swap_rb', True),
+                    crop=False
                 )
                 
                 # Set input and run forward pass
@@ -165,32 +196,46 @@ def main():
                 (h, w) = frame.shape[:2]
                 for i in range(0, pred.shape[2]):
                     confidence = pred[0, 0, i, 2]
-                    if confidence > float(cfg.get("conf_thresh", 0.30)):
+                    detection_cfg = cfg.get('detection', {})
+                    if confidence > float(detection_cfg.get("conf_thresh", 0.50)):
                         class_id = int(pred[0, 0, i, 1])
-                        # Lọc class nếu cần
-                        allowed = set(a.lower() for a in cfg.get("allowed_classes", []))
+                        # Filter classes if needed
+                        detection_cfg = cfg.get('detection', {})
+                        allowed = set(a.lower() for a in detection_cfg.get("allowed_classes", []))
                         if allowed:
-                            # MobileNetSSD class labels (VOC 20 classes + background)
-                            CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
-                                     "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
-                                     "dog", "horse", "motorbike", "person", "pottedplant",
-                                     "sheep", "sofa", "train", "tvmonitor"]
-                            if class_id < len(CLASSES):
-                                name = CLASSES[class_id]
+                            # Get class name from configuration
+                            classes = model_cfg.get('classes', [])
+                            if class_id < len(classes):
+                                name = classes[class_id]
                                 if name.lower() not in allowed:
                                     continue
                             else:
                                 continue  # Skip if class ID is out of range
-                        box = pred[0, 0, i, 3:7] * np.array([w, h, w, h])  # Scale to original frame size
-                        (x1, y1, x2, y2) = box.astype("int")
+                        # Scale detection box from ROI coordinates to original frame
+                        box = pred[0, 0, i, 3:7]  # Get relative coordinates [0-1]
+                        
+                        if roi_cfg.get('enabled', False):
+                            # Scale from ROI size to original frame size
+                            x1 = int(box[0] * roi_w + roi_x)
+                            y1 = int(box[1] * roi_h + roi_y)
+                            x2 = int(box[2] * roi_w + roi_x)
+                            y2 = int(box[3] * roi_h + roi_y)
+                        else:
+                            # Scale to full frame size if no ROI
+                            x1 = int(box[0] * w)
+                            y1 = int(box[1] * h)
+                            x2 = int(box[2] * w)
+                            y2 = int(box[3] * h)
+                            
                         rects.append((x1, y1, x2 - x1, y2 - y1))
 
-                # Lines on canvas space
+                # Get display configuration
+                display_cfg = cfg.get('display', {})
                 H, W = canvas.shape[:2]
-                purple_y = int(float(cfg.get("purple_ratio", 0.5)) * H)
-                blue_y = int(float(cfg.get("blue_ratio", 0.875)) * H)
-                line_margin = max(2, int(H * float(cfg.get("line_margin_factor", 0.01))))
-                min_delta = max(2, int(H * float(cfg.get("min_delta_factor", 0.0033))))
+                purple_y = int(display_cfg.get("purple_ratio", 0.5) * H)
+                blue_y = int(display_cfg.get("blue_ratio", 0.875) * H)
+                line_margin = max(2, int(H * display_cfg.get("line_margin_factor", 0.01)))
+                min_delta = max(2, int(H * display_cfg.get("min_delta_factor", 0.0033)))
 
                 # Filter rects to ROI (center below purple_y)
                 if rects:
