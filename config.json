@@ -1,7 +1,7 @@
 {
   "model": {
-    "input_width": 500,
-    "input_height": 500,
+    "input_width": 300,
+    "input_height": 300,
     "roi": {
       "enabled": true,
       "x": 0.35,
@@ -22,7 +22,7 @@
   },
   "detection": {
     "conf_thresh": 0.50,
-    "allowed_classes": ["car", "bus", "motorbike", "bicycle", "person"],
+    "allowed_classes": ["car", "bus", "motorbike"],
     "nms_threshold": 0.4
   },
   "display": {
