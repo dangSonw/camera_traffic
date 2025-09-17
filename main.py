@@ -110,13 +110,25 @@ def main():
         stop_event = threading.Event()
         _quit_thread = start_quit_listener(stop_event)
 
-        # Prepare display window if requested
+        # Prepare display windows
         if args.show:
             try:
+                # Main detection window
                 cv2.namedWindow('Detections', cv2.WINDOW_NORMAL)
-                cv2.resizeWindow('Detections', 1000, 800)
-            except Exception:
-                pass
+                cv2.resizeWindow('Detections', 1080, 1920)
+                
+                # Debug windows
+                cv2.namedWindow('Original Frame', cv2.WINDOW_NORMAL)
+                cv2.namedWindow('ROI Region', cv2.WINDOW_NORMAL)
+                cv2.namedWindow('Model Input', cv2.WINDOW_NORMAL)
+                
+                # Position windows
+                cv2.moveWindow('Original Frame', 0, 0)
+                cv2.moveWindow('ROI Region', 1100, 0)
+                cv2.moveWindow('Model Input', 0, 800)
+                cv2.moveWindow('Detections', 1100, 800)
+            except Exception as e:
+                logger.warning(f"Error setting up display windows: {e}")
 
         while True:
             if stop_event.is_set():
@@ -169,7 +181,7 @@ def main():
                 # Resize ROI to model input size
                 resized_roi = cv2.resize(roi_frame, (input_width, input_height))
                 
-                # Create blob from ROI
+                # Create blob from ROI and prepare debug images
                 blob = cv2.dnn.blobFromImage(
                     resized_roi,
                     scalefactor=model_cfg.get('scale_factor', 0.00784313725490196),
@@ -178,6 +190,41 @@ def main():
                     swapRB=model_cfg.get('swap_rb', True),
                     crop=False
                 )
+                
+                # Create debug visualizations
+                if args.show:
+                    # Show original frame with ROI rectangle
+                    debug_original = frame.copy()
+                    if roi_cfg.get('enabled', False):
+                        cv2.rectangle(debug_original, 
+                                    (roi_x, roi_y), 
+                                    (roi_x + roi_w, roi_y + roi_h), 
+                                    (0, 255, 0), 2)
+                    
+                    # Show ROI region
+                    debug_roi = roi_frame.copy()
+                    
+                    # Show model input (resized ROI)
+                    debug_model_input = resized_roi.copy()
+                    
+                    # Resize for display
+                    display_size = (640, 640)  # Fixed size for debug windows
+                    debug_original = cv2.resize(debug_original, display_size)
+                    debug_roi = cv2.resize(debug_roi, display_size)
+                    debug_model_input = cv2.resize(debug_model_input, display_size)
+                    
+                    # Add labels
+                    cv2.putText(debug_original, 'Original Frame', (10, 30), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(debug_roi, f'ROI Region ({roi_w}x{roi_h})', (10, 30), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(debug_model_input, f'Model Input ({input_width}x{input_height})', (10, 30), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    
+                    # Display debug windows
+                    cv2.imshow('Original Frame', debug_original)
+                    cv2.imshow('ROI Region', debug_roi)
+                    cv2.imshow('Model Input', debug_model_input)
                 
                 # Set input and run forward pass
                 net.setInput(blob)
