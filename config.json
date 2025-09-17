@@ -4,7 +4,7 @@
     "input_height": 300,
     "roi": {
       "enabled": true,
-      "x": 0.2,
+      "x": 0.3,
       "y": 0.1,
       "width": 0.6,
       "height": 0.8,
