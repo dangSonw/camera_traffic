@@ -135,6 +135,10 @@ def main():
             # fallback if FPS unknown
             sample_step = 1 if sample_interval_sec <= 0 else max(1, int(round(sample_interval_sec * 30.0)))
 
+        # Performance optimization: reduce display update frequency
+        display_update_interval = max(1, int(args.fps / 10))  # Update display every N frames
+        display_frame_count = 0
+
         metric_logger = MetricLogger()
         metric_logger.open()
 
@@ -196,6 +200,8 @@ def main():
 
             frame_count += 1
             show_progress = frame_count <= 10 or frame_count % 10 == 0
+            display_frame_count += 1
+            should_update_display = args.show and (display_frame_count % display_update_interval == 0)
 
             try:
                 # Preprocess frame according to model requirements
@@ -251,8 +257,8 @@ def main():
                     crop=bool(model_cfg.get('crop', False))
                 )
                 
-                # Prepare debug visualizations in a single window (1 window, 3 panels)
-                if args.show:
+                # Prepare debug visualizations in a single window (1 window, 3 panels) - only when needed
+                if should_update_display:
                     # Panels in native form
                     panel_left = frame.copy()
                     if roi_cfg.get('enabled', False):
@@ -451,8 +457,8 @@ def main():
                             cv2.putText(roi_vis, label, (lx, max(0, ly - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
                 draw_hud(canvas, purple_y, blue_y, cfg, state.total_count, state.window_count)
 
-                # Handle 'q' on the single window
-                if args.show:
+                # Handle 'q' on the single window (only when displaying)
+                if should_update_display:
                     try:
                         key = cv2.waitKey(1) & 0xFF
                         if key == ord('q'):
