@@ -65,6 +65,28 @@ def main():
             except Exception:
                 logger.warning("Invalid --sample-interval; falling back to config/default")
 
+        # Inspect prototxt for declared input size (training size)
+        declared_w = None
+        declared_h = None
+        try:
+            with open(args.prototxt, 'r', encoding='utf-8', errors='ignore') as f:
+                txt = f.read()
+            # Try input_dim sequence: input_dim: 1\n input_dim: 3\n input_dim: H\n input_dim: W
+            import re
+            dims = re.findall(r"input_dim\s*:\s*(\d+)", txt)
+            if len(dims) >= 4:
+                # N, C, H, W
+                declared_h = int(dims[2])
+                declared_w = int(dims[3])
+            else:
+                # Try input_shape { dim: 1 dim: 3 dim: H dim: W }
+                dims2 = re.findall(r"dim\s*:\s*(\d+)", txt)
+                if len(dims2) >= 4:
+                    declared_h = int(dims2[2])
+                    declared_w = int(dims2[3])
+        except Exception:
+            pass
+
         # Load MobileNetSSD model
         logger.info(f"Loading model: {Path(args.weights).name}")
         net = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
@@ -72,6 +94,12 @@ def main():
         # Set preferable backend and target (CPU by default)
         net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        try:
+            backend_name = 'OpenCV'
+            target_name = 'CPU'
+            logger.info(f"DNN backend: {backend_name}, target: {target_name}")
+        except Exception:
+            pass
         
         monitor = SystemMonitor(used_cores)
 
@@ -112,6 +140,21 @@ def main():
         print(f"Target FPS: {args.fps}")
         print("=" * 60)
         print("Press 'q' to quit at any time...")
+        # Report model IO details
+        model_cfg = cfg.get('model', {})
+        cfg_w = model_cfg.get('input_width', 300)
+        cfg_h = model_cfg.get('input_height', 300)
+        if declared_w and declared_h:
+            print(f"Model (prototxt) expects: {declared_w}x{declared_h} (WxH)")
+        else:
+            print("Model (prototxt) expects: unknown (no input_dim found)")
+        print(f"Runtime config input: {cfg_w}x{cfg_h} (WxH)")
+        classes = model_cfg.get('classes', [])
+        if classes:
+            print(f"Classes ({len(classes)}): {', '.join(map(str, classes))}")
+        else:
+            print("Classes: not provided in config.json")
+        print("Note: Source/frame size does not change detection input; ROI is resized to model input size.")
 
         # Start background quit listener
         stop_event = threading.Event()
