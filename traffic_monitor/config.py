@@ -32,12 +32,12 @@ DEFAULT_CFG: Dict[str, object] = {
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Traffic Monitoring with MobileNetSSD")
     # Model arguments
-    parser.add_argument('--weights', type=str, required=True, help='Path to Caffe model weights (.caffemodel)')
+    parser.add_argument('--weights', '--model', dest='weights', type=str, required=True, help='Path to Caffe model weights (.caffemodel)')
     parser.add_argument('--prototxt', type=str, required=True, help="Path to Caffe 'deploy' prototxt file")
     
     # Input/Output arguments
-    parser.add_argument('--source', type=str, default='../traffic_1080_1920_30fps.mp4', 
-                       help='Path to video file or image')
+    parser.add_argument('--source', '--video', '--input', dest='source', type=str, default='../traffic_1080_1920_30fps.mp4', 
+                       help='Path to video/image, webcam index (e.g. 0), or RTSP/HTTP URL')
     parser.add_argument('--fps', type=float, default=10.0, 
                        help='Target processing FPS (lower values reduce CPU usage)')
     

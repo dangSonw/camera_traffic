@@ -43,8 +43,12 @@ def main():
     if not Path(args.prototxt).exists():
         logger.error(f"Caffe prototxt file not found: {args.prototxt}")
         return 1
-    if not Path(args.source).exists():
-        logger.error(f"Source video not found: {args.source}")
+    # Allow file path, webcam index, or network URL
+    source_arg = str(args.source)
+    is_url = source_arg.startswith(('rtsp://', 'http://', 'https://'))
+    is_cam_index = source_arg.isdigit()
+    if not is_url and not is_cam_index and not Path(source_arg).exists():
+        logger.error(f"Source not found: {args.source}")
         return 1
 
     cap = None
@@ -71,14 +75,17 @@ def main():
         
         monitor = SystemMonitor(used_cores)
 
-        cap = cv2.VideoCapture(args.source)
+        cap = cv2.VideoCapture(int(source_arg) if is_cam_index else source_arg)
         if not cap.isOpened():
             logger.error(f"Cannot open video: {args.source}")
             return 1
 
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        original_fps = cap.get(cv2.CAP_PROP_FPS)
-        logger.info(f"Video: {total_frames} frames @ {original_fps:.1f} FPS")
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if not is_cam_index and not is_url else 0
+        original_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        try:
+            logger.info(f"Video: {total_frames} frames @ {float(original_fps):.1f} FPS")
+        except Exception:
+            logger.info("Video: live source")
 
         frame_interval = 1.0 / args.fps
         # Determine sampling step in frames (process one frame every N seconds of video time)
@@ -236,6 +243,9 @@ def main():
 
                 # Parse detections, filter to vehicle-like classes and reasonable confidence
                 rects: List[Tuple[int, int, int, int]] = []
+                boxes_for_nms: List[List[int]] = []
+                confidences: List[float] = []
+                class_ids: List[int] = []
                 (h, w) = frame.shape[:2]
                 for i in range(0, pred.shape[2]):
                     confidence = pred[0, 0, i, 2]
@@ -269,8 +279,22 @@ def main():
                             y1 = int(box[1] * h)
                             x2 = int(box[2] * w)
                             y2 = int(box[3] * h)
-                            
-                        rects.append((x1, y1, x2 - x1, y2 - y1))
+                        bw = max(0, x2 - x1)
+                        bh = max(0, y2 - y1)
+                        if bw <= 0 or bh <= 0:
+                            continue
+                        boxes_for_nms.append([x1, y1, bw, bh])
+                        confidences.append(float(confidence))
+                        class_ids.append(class_id)
+
+                # Apply NMS if configured
+                if boxes_for_nms:
+                    nms_thresh = float(cfg.get('detection', {}).get('nms_threshold', 0.4))
+                    indices = cv2.dnn.NMSBoxes(boxes_for_nms, confidences, float(cfg.get('detection', {}).get('conf_thresh', 0.50)), nms_thresh)
+                    if len(indices) > 0:
+                        for idx in (indices.flatten() if hasattr(indices, 'flatten') else indices):
+                            x, y, bw, bh = boxes_for_nms[idx]
+                            rects.append((int(x), int(y), int(bw), int(bh)))
 
                 # Get display configuration
                 display_cfg = cfg.get('display', {})
@@ -295,6 +319,12 @@ def main():
 
                 # Draw overlays
                 draw_tracks(canvas, tracked, id_colors, state.histories, cfg)
+                # Optional: draw class labels/confidence for raw detections (pre-tracking)
+                # Uncomment if needed to mirror Run.py style class labels
+                # classes = model_cfg.get('classes', [])
+                # for (x, y, w_b, h_b), conf, cid in zip(boxes_for_nms, confidences, class_ids):
+                #     label = f"{classes[cid] if cid < len(classes) else cid}:{conf:.2f}"
+                #     cv2.putText(canvas, label, (x, max(0, y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
                 draw_hud(canvas, purple_y, blue_y, cfg, state.total_count, state.window_count)
 
                 # Show window and handle 'q'
