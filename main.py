@@ -120,7 +120,13 @@ def main():
         # Prepare display window
         if args.show:
             cv2.namedWindow('Traffic Monitor', cv2.WINDOW_NORMAL)
-            cv2.resizeWindow('Traffic Monitor', 1600, 1200)  # Initial size, can be resized later
+            try:
+                disp_cfg = cfg.get('display', {})
+                init_w = int(disp_cfg.get('max_width', 1280))
+                init_h = int(disp_cfg.get('max_height', 720))
+            except Exception:
+                init_w, init_h = 1280, 720
+            cv2.resizeWindow('Traffic Monitor', init_w, init_h)
 
         while True:
             if stop_event.is_set():
@@ -183,51 +189,61 @@ def main():
                     crop=False
                 )
                 
-                # Create debug visualizations in a single window
+                # Prepare debug visualizations in a single window (1 window, 3 panels)
                 if args.show:
-                    # Create a copy of the frame with ROI rectangle
-                    debug_original = frame.copy()
+                    # Left panel: original with ROI rectangle
+                    panel_left = frame.copy()
                     if roi_cfg.get('enabled', False):
-                        cv2.rectangle(debug_original, 
-                                    (roi_x, roi_y), 
-                                    (roi_x + roi_w, roi_y + roi_h), 
-                                    (0, 255, 0), 2)
-                    
-                    # Get ROI region
-                    debug_roi = roi_frame.copy()
-                    
-                    # Get model input (resized ROI)
-                    debug_model_input = cv2.cvtColor(resized_roi, cv2.COLOR_BGR2RGB)  # Convert back to BGR for display
-                    
-                    # Create a blank canvas for the combined view
-                    h, w = debug_original.shape[:2]
-                    combined_h = h * 2  # 2 rows
-                    combined_w = w + max(debug_roi.shape[1], debug_model_input.shape[1])  # Original + max of ROI/Model
-                    
-                    # Create a black canvas
+                        cv2.rectangle(panel_left,
+                                      (roi_x, roi_y),
+                                      (roi_x + roi_w, roi_y + roi_h),
+                                      (0, 255, 0),
+                                      int(cfg.get('display', {}).get('line_thickness', 2)))
+
+                    # Top-right panel: ROI crop (true size)
+                    panel_tr = roi_frame.copy()
+
+                    # Bottom-right panel: model input (true size = input_width x input_height)
+                    panel_br = cv2.cvtColor(resized_roi, cv2.COLOR_BGR2RGB)
+
+                    # Compose layout: left column full height; right column split into two rows
+                    H_left, W_left = panel_left.shape[:2]
+                    H_tr, W_tr = panel_tr.shape[:2]
+                    H_br, W_br = panel_br.shape[:2]
+
+                    right_w = max(W_tr, W_br)
+                    combined_h = max(H_left, H_tr + H_br)
+                    combined_w = W_left + right_w
                     combined = np.zeros((combined_h, combined_w, 3), dtype=np.uint8)
-                    
-                    # Place the original frame (top-left)
-                    combined[0:h, 0:w] = debug_original
-                    
-                    # Place the ROI region (bottom-left)
-                    roi_h, roi_w = debug_roi.shape[:2]
-                    combined[h:h+roi_h, 0:roi_w] = debug_roi
-                    
-                    # Place the model input (top-right)
-                    model_h, model_w = debug_model_input.shape[:2]
-                    combined[0:model_h, w:w+model_w] = cv2.resize(debug_model_input, (model_w, model_h))
-                    
-                    # Add labels
-                    cv2.putText(combined, 'Original Frame', (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.putText(combined, f'ROI Region ({roi_w}x{roi_h})', (10, h + 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.putText(combined, f'Model Input ({input_width}x{input_height})', (w + 10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    
-                    # Display the combined window
-                    cv2.imshow('Traffic Monitor', combined)
+
+                    # Place panels at native resolution (may exceed screen; will scale down later)
+                    combined[0:H_left, 0:W_left] = panel_left
+                    combined[0:H_tr, W_left:W_left + W_tr] = panel_tr
+                    combined[H_tr:H_tr + H_br, W_left:W_left + W_br] = panel_br
+
+                    # Annotate each panel with true resolution (WxH)
+                    def put_sz(img, origin, size_text):
+                        cv2.putText(img, size_text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+                    put_sz(combined, (10, 28), f'Original {W_left}x{H_left}')
+                    cv2.putText(combined, 'ROI', (W_left + 10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.putText(combined, f'{W_tr}x{H_tr}', (W_left + 10, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.putText(combined, 'Model Input', (W_left + 10, H_tr + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.putText(combined, f'{input_width}x{input_height}', (W_left + 10, H_tr + 52), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+                    # Scale composite to fit Raspberry Pi screen or configured max size
+                    disp_cfg = cfg.get('display', {})
+                    max_w = int(disp_cfg.get('max_width', 1280))
+                    max_h = int(disp_cfg.get('max_height', 720))
+                    scale = min(max_w / max(1, combined_w), max_h / max(1, combined_h), 1.0)
+                    if scale < 1.0:
+                        disp_w = max(1, int(combined_w * scale))
+                        disp_h = max(1, int(combined_h * scale))
+                        combined_disp = cv2.resize(combined, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
+                    else:
+                        combined_disp = combined
+
+                    cv2.imshow('Traffic Monitor', combined_disp)
                 
                 # Set input and run forward pass
                 net.setInput(blob)
@@ -238,7 +254,7 @@ def main():
                 inference_time = time.time() - inference_start
                 total_inference_time += inference_time
 
-                # Prepare display canvas: keep original frame size (no resizing)
+                # Prepare display canvas (used for overlays/tracking on original)
                 canvas = frame.copy()
 
                 # Parse detections, filter to vehicle-like classes and reasonable confidence
@@ -327,10 +343,9 @@ def main():
                 #     cv2.putText(canvas, label, (x, max(0, y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
                 draw_hud(canvas, purple_y, blue_y, cfg, state.total_count, state.window_count)
 
-                # Show window and handle 'q'
+                # Handle 'q' on the single window
                 if args.show:
                     try:
-                        cv2.imshow('Detections', canvas)
                         key = cv2.waitKey(1) & 0xFF
                         if key == ord('q'):
                             stop_event.set()
