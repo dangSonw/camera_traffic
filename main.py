@@ -262,15 +262,25 @@ def main():
                                       (0, 255, 0),
                                       int(cfg.get('display', {}).get('line_thickness', 2)))
 
-                    # Draw purple/blue horizontal lines on the left panel
+                    # Draw purple/blue horizontal lines on the left panel (with shadow + labels)
                     try:
                         disp_cfg_local = cfg.get('display', {})
                         H_full, W_full = panel_left.shape[:2]
-                        purple_y = int(disp_cfg_local.get('purple_ratio', 0.5) * H_full)
-                        blue_y = int(disp_cfg_local.get('blue_ratio', 0.875) * H_full)
+                        purple_y = int(float(disp_cfg_local.get('purple_ratio', 0.5)) * H_full)
+                        blue_y = int(float(disp_cfg_local.get('blue_ratio', 0.875)) * H_full)
                         line_th = max(2, int(disp_cfg_local.get('line_thickness', 2)))
+                        # Shadow lines for visibility
+                        cv2.line(panel_left, (0, purple_y+1), (W_full - 1, purple_y+1), (0, 0, 0), line_th + 2)
+                        cv2.line(panel_left, (0, blue_y+1), (W_full - 1, blue_y+1), (0, 0, 0), line_th + 2)
+                        # Colored lines
                         cv2.line(panel_left, (0, purple_y), (W_full - 1, purple_y), (255, 0, 255), line_th)
                         cv2.line(panel_left, (0, blue_y), (W_full - 1, blue_y), (255, 0, 0), line_th)
+                        # Labels
+                        cv2.putText(panel_left, f"Purple y={purple_y}", (10, max(20, purple_y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+                        cv2.putText(panel_left, f"Blue y={blue_y}", (10, min(H_full - 10, blue_y + 24)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+                        # Debug print for first few frames
+                        if frame_count <= 5:
+                            logger.info(f"Lines: purple_y={purple_y}, blue_y={blue_y}, thickness={line_th}, H={H_full}")
                     except Exception:
                         pass
 
