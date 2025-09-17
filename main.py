@@ -252,8 +252,11 @@ def main():
                                       int(cfg.get('display', {}).get('line_thickness', 2)))
 
                     panel_tr = roi_frame.copy()
-                    # Show exactly what is fed to the network (post-resize, pre-blob). Keep BGR as-is
-                    panel_br = resized_roi.copy()
+                    # Bottom-right shows detections drawn on ROI if any; otherwise blank
+                    if 'roi_vis' in locals() and len(detections_kept) > 0:
+                        panel_br = roi_vis
+                    else:
+                        panel_br = np.zeros_like(roi_frame)
 
                     # Target display grid: two columns of equal width; right column split into two equal rows
                     disp_cfg = cfg.get('display', {})
@@ -355,6 +358,7 @@ def main():
                         class_ids.append(class_id)
 
                 # Apply NMS if configured
+                detections_kept: List[Tuple[int, int, int, int, float, int]] = []  # x, y, w, h, conf, class_id
                 if boxes_for_nms:
                     nms_thresh = float(cfg.get('detection', {}).get('nms_threshold', 0.4))
                     indices = cv2.dnn.NMSBoxes(boxes_for_nms, confidences, float(cfg.get('detection', {}).get('conf_thresh', 0.50)), nms_thresh)
@@ -362,6 +366,7 @@ def main():
                         for idx in (indices.flatten() if hasattr(indices, 'flatten') else indices):
                             x, y, bw, bh = boxes_for_nms[idx]
                             rects.append((int(x), int(y), int(bw), int(bh)))
+                            detections_kept.append((int(x), int(y), int(bw), int(bh), float(confidences[idx]), int(class_ids[idx]) if idx < len(class_ids) else -1))
 
                 # Get display configuration
                 display_cfg = cfg.get('display', {})
@@ -386,12 +391,31 @@ def main():
 
                 # Draw overlays
                 draw_tracks(canvas, tracked, id_colors, state.histories, cfg)
-                # Optional: draw class labels/confidence for raw detections (pre-tracking)
-                # Uncomment if needed to mirror Run.py style class labels
-                # classes = model_cfg.get('classes', [])
-                # for (x, y, w_b, h_b), conf, cid in zip(boxes_for_nms, confidences, class_ids):
-                #     label = f"{classes[cid] if cid < len(classes) else cid}:{conf:.2f}"
-                #     cv2.putText(canvas, label, (x, max(0, y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
+                # Build ROI visualization with detections for bottom-right panel
+                detections_exist = len(detections_kept) > 0
+                roi_vis = roi_frame.copy()
+                if detections_exist:
+                    classes_list = model_cfg.get('classes', [])
+                    for x, y, bw, bh, conf, cid in detections_kept:
+                        # Map to ROI-local coordinates if ROI is enabled
+                        if roi_cfg.get('enabled', False):
+                            lx = x - roi_x
+                            ly = y - roi_y
+                        else:
+                            # No ROI: use full-frame; bottom-right will show full frame resized
+                            lx = x
+                            ly = y
+                        # Clip to roi_vis bounds
+                        lx2 = lx + bw
+                        ly2 = ly + bh
+                        lx = max(0, min(lx, roi_vis.shape[1] - 1))
+                        ly = max(0, min(ly, roi_vis.shape[0] - 1))
+                        lx2 = max(0, min(lx2, roi_vis.shape[1] - 1))
+                        ly2 = max(0, min(ly2, roi_vis.shape[0] - 1))
+                        if lx2 > lx and ly2 > ly:
+                            cv2.rectangle(roi_vis, (lx, ly), (lx2, ly2), (0, 255, 0), 2)
+                            label = f"{classes_list[cid] if 0 <= cid < len(classes_list) else cid}:{conf:.2f}"
+                            cv2.putText(roi_vis, label, (lx, max(0, ly - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
                 draw_hud(canvas, purple_y, blue_y, cfg, state.total_count, state.window_count)
 
                 # Handle 'q' on the single window
