@@ -191,7 +191,7 @@ def main():
                 
                 # Prepare debug visualizations in a single window (1 window, 3 panels)
                 if args.show:
-                    # Left panel: original with ROI rectangle
+                    # Panels in native form
                     panel_left = frame.copy()
                     if roi_cfg.get('enabled', False):
                         cv2.rectangle(panel_left,
@@ -200,48 +200,47 @@ def main():
                                       (0, 255, 0),
                                       int(cfg.get('display', {}).get('line_thickness', 2)))
 
-                    # Top-right panel: ROI crop (true size)
                     panel_tr = roi_frame.copy()
-
-                    # Bottom-right panel: model input (true size = input_width x input_height)
                     panel_br = cv2.cvtColor(resized_roi, cv2.COLOR_BGR2RGB)
 
-                    # Compose layout: left column full height; right column split into two rows
-                    H_left, W_left = panel_left.shape[:2]
-                    H_tr, W_tr = panel_tr.shape[:2]
-                    H_br, W_br = panel_br.shape[:2]
-
-                    right_w = max(W_tr, W_br)
-                    combined_h = max(H_left, H_tr + H_br)
-                    combined_w = W_left + right_w
-                    combined = np.zeros((combined_h, combined_w, 3), dtype=np.uint8)
-
-                    # Place panels at native resolution (may exceed screen; will scale down later)
-                    combined[0:H_left, 0:W_left] = panel_left
-                    combined[0:H_tr, W_left:W_left + W_tr] = panel_tr
-                    combined[H_tr:H_tr + H_br, W_left:W_left + W_br] = panel_br
-
-                    # Annotate each panel with true resolution (WxH)
-                    def put_sz(img, origin, size_text):
-                        cv2.putText(img, size_text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-                    put_sz(combined, (10, 28), f'Original {W_left}x{H_left}')
-                    cv2.putText(combined, 'ROI', (W_left + 10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                    cv2.putText(combined, f'{W_tr}x{H_tr}', (W_left + 10, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                    cv2.putText(combined, 'Model Input', (W_left + 10, H_tr + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                    cv2.putText(combined, f'{input_width}x{input_height}', (W_left + 10, H_tr + 52), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-                    # Scale composite to fit Raspberry Pi screen or configured max size
+                    # Target display grid: two columns of equal width; right column split into two equal rows
                     disp_cfg = cfg.get('display', {})
                     max_w = int(disp_cfg.get('max_width', 1280))
                     max_h = int(disp_cfg.get('max_height', 720))
-                    scale = min(max_w / max(1, combined_w), max_h / max(1, combined_h), 1.0)
-                    if scale < 1.0:
-                        disp_w = max(1, int(combined_w * scale))
-                        disp_h = max(1, int(combined_h * scale))
-                        combined_disp = cv2.resize(combined, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
-                    else:
-                        combined_disp = combined
+                    col_w = max(2, max_w // 2)
+                    col_h = max(2, max_h)
+                    row_h_top = col_h // 2
+                    row_h_bottom = col_h - row_h_top
+
+                    def fit_into_box(src, box_w, box_h):
+                        h, w = src.shape[:2]
+                        if w == 0 or h == 0:
+                            return np.zeros((box_h, box_w, 3), dtype=np.uint8)
+                        scale = min(box_w / w, box_h / h)
+                        new_w = max(1, int(w * scale))
+                        new_h = max(1, int(h * scale))
+                        resized = cv2.resize(src, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                        canvas = np.zeros((box_h, box_w, 3), dtype=np.uint8)
+                        off_x = (box_w - new_w) // 2
+                        off_y = (box_h - new_h) // 2
+                        canvas[off_y:off_y + new_h, off_x:off_x + new_w] = resized
+                        return canvas
+
+                    left_cell = fit_into_box(panel_left, col_w, col_h)
+                    tr_cell = fit_into_box(panel_tr, col_w, row_h_top)
+                    br_cell = fit_into_box(panel_br, col_w, row_h_bottom)
+
+                    combined_disp = np.zeros((col_h, col_w * 2, 3), dtype=np.uint8)
+                    combined_disp[0:col_h, 0:col_w] = left_cell
+                    combined_disp[0:row_h_top, col_w:col_w + col_w] = tr_cell
+                    combined_disp[row_h_top:col_h, col_w:col_w + col_w] = br_cell
+
+                    # Labels with true sizes
+                    H_left, W_left = frame.shape[:2]
+                    H_tr, W_tr = roi_frame.shape[:2]
+                    cv2.putText(combined_disp, f'Original {W_left}x{H_left}', (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.putText(combined_disp, f'ROI {W_tr}x{H_tr}', (col_w + 10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.putText(combined_disp, f'Model Input {input_width}x{input_height}', (col_w + 10, row_h_top + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
                     cv2.imshow('Traffic Monitor', combined_disp)
                 
