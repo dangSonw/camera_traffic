@@ -11,13 +11,5 @@
   "text_thickness": 2,
   "trail_max_len": 10,
   "density_window": 10,
-  "sample_interval_sec": 1.0,
-
-  "tracker_iou_threshold": 0.25,
-  "tracker_max_distance": 50.0,
-  "tracker_max_missed": 12,
-  "tracker_smooth_alpha": 0.25,
-  "tracker_use_prediction": true,
-  "tracker_velocity_alpha": 0.6,
-  "tracker_max_speed": 80.0
+  "sample_interval_sec": 1.0
 }

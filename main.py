@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 import torch
 import cv2
+import numpy as np
 import logging
 import traceback
 from typing import List, Tuple
@@ -15,7 +16,6 @@ from traffic_monitor.system_utils import (
     write_init_log,
     print_progress_bar,
 )
-from traffic_monitor.yolo_processor import YOLOProcessor
 from traffic_monitor.config import build_arg_parser, load_runtime_config
 from traffic_monitor.logging_utils import MetricLogger
 from traffic_monitor.counter import CounterState
@@ -31,22 +31,17 @@ try:
 except Exception:
     msvcrt = None
 
-# Ensure workspace root and package root are on sys.path
-FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0]
-WORKSPACE_ROOT = ROOT.parent
-if str(WORKSPACE_ROOT) not in sys.path:
-    sys.path.insert(0, str(WORKSPACE_ROOT))
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    # Validate required model files
     if not Path(args.weights).exists():
-        logger.error(f"Weights file not found: {args.weights}")
+        logger.error(f"Caffe model weights not found: {args.weights}")
+        return 1
+    if not Path(args.prototxt).exists():
+        logger.error(f"Caffe prototxt file not found: {args.prototxt}")
         return 1
     if not Path(args.source).exists():
         logger.error(f"Source video not found: {args.source}")
@@ -66,16 +61,14 @@ def main():
             except Exception:
                 logger.warning("Invalid --sample-interval; falling back to config/default")
 
-        # load our serialized model from disk
-        #processor = YOLOProcessor(args.weights, 'cpu')
-        processor = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
-        # processor.last_input_bgr = None
-        # processor.use_letterbox = False
+        # Load MobileNetSSD model
+        logger.info(f"Loading model: {Path(args.weights).name}")
+        net = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
         
-        # Configure preprocessing behavior
-        if getattr(args, 'letterbox', False):
-            setattr(processor, 'use_letterbox', True)
-        # write_init_log(args, used_cores, processor)
+        # Set preferable backend and target (CPU by default)
+        net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        
         monitor = SystemMonitor(used_cores)
 
         cap = cv2.VideoCapture(args.source)
@@ -103,20 +96,8 @@ def main():
         total_inference_time = 0
         start_time = time.time()
 
-        # Tracker and counting state (configurable)
-        try:
-            tracker = Tracker(
-                iou_threshold=float(cfg.get("tracker_iou_threshold", 0.2)),
-                max_distance=float(cfg.get("tracker_max_distance", 60.0)),
-                max_missed=int(cfg.get("tracker_max_missed", 10)),
-                smooth_alpha=float(cfg.get("tracker_smooth_alpha", 0.25)),
-                use_prediction=bool(cfg.get("tracker_use_prediction", True)),
-                velocity_alpha=float(cfg.get("tracker_velocity_alpha", 0.5)),
-                max_speed=float(cfg.get("tracker_max_speed", 120.0)),
-            )
-        except TypeError as e:
-            logger.warning(f"Tracker init with config args failed ({e}); falling back to default Tracker(). Consider updating tracker.py.")
-            tracker = Tracker()
+        # Tracker and counting state (simplified)
+        tracker = Tracker()
         state = CounterState(cfg)
 
         print("\n=== STARTING VIDEO PROCESSING ===")
@@ -153,54 +134,54 @@ def main():
             show_progress = frame_count <= 10 or frame_count % 10 == 0
 
             try:
-                # Compute source-space purple ROI line
-                srcH, srcW = frame.shape[:2]
-                purple_src_y = int(float(cfg.get("purple_ratio", 0.5)) * srcH)
-                # Prepare masked frame for model input (only bottom region is detectable)
-                frame_for_model = frame.copy()
-                frame_for_model[:purple_src_y, :] = 0  # black out above purple line for model
-
+                # Preprocess frame for MobileNetSSD
                 inference_start = time.time()
-
-
-                (h, w) = frame_for_model.shape[:2]
-                resized_input = cv2.resize(frame_for_model, (300, 300), interpolation=cv2.INTER_LINEAR)
-                blob = cv2.dnn.blobFromImage(resized_input, 0.007843, (300, 300), 127.5)
+                (h, w) = frame.shape[:2]
                 
-                # lưu ảnh BGR đã resize vào thuộc tính last_input_bgr để phần vẽ/hiển thị dùng chung kích thước
-                processor.last_input_bgr = resized_input
+                # Create blob from image with mean subtraction and scaling
+                blob = cv2.dnn.blobFromImage(
+                    frame, 
+                    scalefactor=1.0/127.5,  # Scale pixel values to [0,1]
+                    size=(300, 300),        # Input size for MobileNetSSD
+                    mean=(127.5, 127.5, 127.5),  # Mean subtraction
+                    swapRB=True,             # BGR to RGB
+                    crop=False               # Don't crop, will maintain aspect ratio
+                )
                 
-                processor.setInput(blob)
-                pred = processor.forward()
+                # Set input and run forward pass
+                net.setInput(blob)
+                pred = net.forward()
 
 
 
                 inference_time = time.time() - inference_start
                 total_inference_time += inference_time
 
-                # Prepare display canvas: full original frame, resized to match model input size for consistent coordinates
-                if processor.last_input_bgr is not None:
-                    disp_h, disp_w = processor.last_input_bgr.shape[:2]
-                    canvas = cv2.resize(frame, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
-                else:
-                    canvas = frame.copy()
+                # Prepare display canvas: keep original frame size (no resizing)
+                canvas = frame.copy()
 
                 # Parse detections, filter to vehicle-like classes and reasonable confidence
                 rects: List[Tuple[int, int, int, int]] = []
                 (h, w) = frame.shape[:2]
-                for i in range(pred.shape[2]):
+                for i in range(0, pred.shape[2]):
                     confidence = pred[0, 0, i, 2]
                     if confidence > float(cfg.get("conf_thresh", 0.30)):
                         class_id = int(pred[0, 0, i, 1])
                         # Lọc class nếu cần
                         allowed = set(a.lower() for a in cfg.get("allowed_classes", []))
                         if allowed:
-                            # MobileNetSSD mặc định có CLASSES 21 nhãn VOC
-                            CLASSES = ["bicycle", "bus", "car", "motorbike", "person",]
-                            name = CLASSES[class_id] if class_id < len(CLASSES) else str(class_id)
-                            if name.lower() not in allowed:
-                                continue
-                        box = pred[0, 0, i, 3:7] * np.array([w, h, w, h])
+                            # MobileNetSSD class labels (VOC 20 classes + background)
+                            CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
+                                     "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
+                                     "dog", "horse", "motorbike", "person", "pottedplant",
+                                     "sheep", "sofa", "train", "tvmonitor"]
+                            if class_id < len(CLASSES):
+                                name = CLASSES[class_id]
+                                if name.lower() not in allowed:
+                                    continue
+                            else:
+                                continue  # Skip if class ID is out of range
+                        box = pred[0, 0, i, 3:7] * np.array([w, h, w, h])  # Scale to original frame size
                         (x1, y1, x2, y2) = box.astype("int")
                         rects.append((x1, y1, x2 - x1, y2 - y1))
 
