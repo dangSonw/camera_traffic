@@ -110,25 +110,10 @@ def main():
         stop_event = threading.Event()
         _quit_thread = start_quit_listener(stop_event)
 
-        # Prepare display windows
+        # Prepare display window
         if args.show:
-            try:
-                # Main detection window
-                cv2.namedWindow('Detections', cv2.WINDOW_NORMAL)
-                cv2.resizeWindow('Detections', 1080, 1920)
-                
-                # Debug windows
-                cv2.namedWindow('Original Frame', cv2.WINDOW_NORMAL)
-                cv2.namedWindow('ROI Region', cv2.WINDOW_NORMAL)
-                cv2.namedWindow('Model Input', cv2.WINDOW_NORMAL)
-                
-                # Position windows
-                cv2.moveWindow('Original Frame', 0, 0)
-                cv2.moveWindow('ROI Region', 1100, 0)
-                cv2.moveWindow('Model Input', 0, 800)
-                cv2.moveWindow('Detections', 1100, 800)
-            except Exception as e:
-                logger.warning(f"Error setting up display windows: {e}")
+            cv2.namedWindow('Traffic Monitor', cv2.WINDOW_NORMAL)
+            cv2.resizeWindow('Traffic Monitor', 1600, 1200)  # Initial size, can be resized later
 
         while True:
             if stop_event.is_set():
@@ -191,9 +176,9 @@ def main():
                     crop=False
                 )
                 
-                # Create debug visualizations
+                # Create debug visualizations in a single window
                 if args.show:
-                    # Show original frame with ROI rectangle
+                    # Create a copy of the frame with ROI rectangle
                     debug_original = frame.copy()
                     if roi_cfg.get('enabled', False):
                         cv2.rectangle(debug_original, 
@@ -201,30 +186,41 @@ def main():
                                     (roi_x + roi_w, roi_y + roi_h), 
                                     (0, 255, 0), 2)
                     
-                    # Show ROI region
+                    # Get ROI region
                     debug_roi = roi_frame.copy()
                     
-                    # Show model input (resized ROI)
-                    debug_model_input = resized_roi.copy()
+                    # Get model input (resized ROI)
+                    debug_model_input = cv2.cvtColor(resized_roi, cv2.COLOR_BGR2RGB)  # Convert back to BGR for display
                     
-                    # Resize for display
-                    display_size = (640, 640)  # Fixed size for debug windows
-                    debug_original = cv2.resize(debug_original, display_size)
-                    debug_roi = cv2.resize(debug_roi, display_size)
-                    debug_model_input = cv2.resize(debug_model_input, display_size)
+                    # Create a blank canvas for the combined view
+                    h, w = debug_original.shape[:2]
+                    combined_h = h * 2  # 2 rows
+                    combined_w = w + max(debug_roi.shape[1], debug_model_input.shape[1])  # Original + max of ROI/Model
+                    
+                    # Create a black canvas
+                    combined = np.zeros((combined_h, combined_w, 3), dtype=np.uint8)
+                    
+                    # Place the original frame (top-left)
+                    combined[0:h, 0:w] = debug_original
+                    
+                    # Place the ROI region (bottom-left)
+                    roi_h, roi_w = debug_roi.shape[:2]
+                    combined[h:h+roi_h, 0:roi_w] = debug_roi
+                    
+                    # Place the model input (top-right)
+                    model_h, model_w = debug_model_input.shape[:2]
+                    combined[0:model_h, w:w+model_w] = cv2.resize(debug_model_input, (model_w, model_h))
                     
                     # Add labels
-                    cv2.putText(debug_original, 'Original Frame', (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    cv2.putText(debug_roi, f'ROI Region ({roi_w}x{roi_h})', (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    cv2.putText(debug_model_input, f'Model Input ({input_width}x{input_height})', (10, 30), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(combined, 'Original Frame', (10, 30), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.putText(combined, f'ROI Region ({roi_w}x{roi_h})', (10, h + 30), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.putText(combined, f'Model Input ({input_width}x{input_height})', (w + 10, 30), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                     
-                    # Display debug windows
-                    cv2.imshow('Original Frame', debug_original)
-                    cv2.imshow('ROI Region', debug_roi)
-                    cv2.imshow('Model Input', debug_model_input)
+                    # Display the combined window
+                    cv2.imshow('Traffic Monitor', combined)
                 
                 # Set input and run forward pass
                 net.setInput(blob)
