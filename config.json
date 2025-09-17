@@ -1,7 +1,7 @@
 {
   "model": {
-    "input_width": 300,
-    "input_height": 300,
+    "input_width": 500,
+    "input_height": 500,
     "roi": {
       "enabled": true,
       "x": 0.35,
