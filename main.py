@@ -64,6 +64,17 @@ def main():
                 cfg['sample_interval_sec'] = max(0.0, float(args.sample_interval))
             except Exception:
                 logger.warning("Invalid --sample-interval; falling back to config/default")
+        # Map nested performance.* if present in config.json
+        try:
+            perf_cfg = cfg.get('performance', {})
+            if isinstance(perf_cfg, dict):
+                if 'sample_interval_sec' in perf_cfg and 'sample_interval_sec' not in cfg:
+                    cfg['sample_interval_sec'] = max(0.0, float(perf_cfg.get('sample_interval_sec', 0.0)))
+                if 'target_fps' in perf_cfg and (args.fps == 10.0 or args.fps is None):
+                    # Only override if user didn't explicitly change default
+                    args.fps = float(perf_cfg.get('target_fps', args.fps))
+        except Exception:
+            pass
 
         # Inspect prototxt for declared input size (training size)
         declared_w = None
@@ -250,6 +261,18 @@ def main():
                                       (roi_x + roi_w, roi_y + roi_h),
                                       (0, 255, 0),
                                       int(cfg.get('display', {}).get('line_thickness', 2)))
+
+                    # Draw purple/blue horizontal lines on the left panel
+                    try:
+                        disp_cfg_local = cfg.get('display', {})
+                        H_full, W_full = panel_left.shape[:2]
+                        purple_y = int(disp_cfg_local.get('purple_ratio', 0.5) * H_full)
+                        blue_y = int(disp_cfg_local.get('blue_ratio', 0.875) * H_full)
+                        line_th = max(2, int(disp_cfg_local.get('line_thickness', 2)))
+                        cv2.line(panel_left, (0, purple_y), (W_full - 1, purple_y), (255, 0, 255), line_th)
+                        cv2.line(panel_left, (0, blue_y), (W_full - 1, blue_y), (255, 0, 0), line_th)
+                    except Exception:
+                        pass
 
                     panel_tr = roi_frame.copy()
                     # Bottom-right shows detections drawn on ROI if any; otherwise blank

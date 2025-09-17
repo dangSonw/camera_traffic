@@ -1,7 +1,7 @@
 {
   "model": {
-    "input_width": 300,
-    "input_height": 300,
+    "input_width": 500,
+    "input_height": 500,
     "roi": {
       "enabled": true,
       "x": 0.35,
@@ -9,11 +9,11 @@
       "width": 0.4,
       "height": 0.6,
       "color": [0, 255, 0],
-      "thickness": 2
+      "thickness": 10
     },
     "scale_factor": 0.00784313725490196,
     "mean_values": [127.5, 127.5, 127.5],
-    "swap_rb": true,
+    "swap_rb": false,
     "crop": false,
     "classes": ["background", "aeroplane", "bicycle", "bird", "boat",
                 "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
@@ -34,13 +34,15 @@
     "line_thickness": 10,
     "text_scale": 0.8,
     "text_thickness": 2,
-    "trail_max_len": 10
+    "trail_max_len": 10,
+    "max_width": 1280,
+    "max_height": 720
   },
   "tracking": {
     "density_window": 10
   },
   "performance": {
-    "sample_interval_sec": 1.0,
+    "sample_interval_sec": 0.0,
     "target_fps": 10.0
   }
 }
