@@ -151,8 +151,12 @@ def main():
                 # Get model configuration
                 model_cfg = cfg.get('model', {})
                 roi_cfg = model_cfg.get('roi', {})
-                input_width = model_cfg.get('input_width', 300)
-                input_height = model_cfg.get('input_height', 300)
+                # Ensure config values are respected; fallback to 300 only if missing
+                try:
+                    input_width = int(model_cfg.get('input_width')) if 'input_width' in model_cfg else 300
+                    input_height = int(model_cfg.get('input_height')) if 'input_height' in model_cfg else 300
+                except Exception:
+                    input_width, input_height = 300, 300
                 
                 # Calculate ROI coordinates
                 if roi_cfg.get('enabled', False):
@@ -178,15 +182,19 @@ def main():
                 
                 # Resize ROI to model input size
                 resized_roi = cv2.resize(roi_frame, (input_width, input_height))
-                
-                # Create blob from ROI and prepare debug images
+
+                # MobileNetSSD Caffe expects BGR input, scale=0.007843..., mean=127.5, no RGB swap
+                scale_val = float(model_cfg.get('scale_factor', 0.00784313725490196))
+                mean_vals = model_cfg.get('mean_values', [127.5, 127.5, 127.5])
+                swap_rb = bool(model_cfg.get('swap_rb', False))
+
                 blob = cv2.dnn.blobFromImage(
                     resized_roi,
-                    scalefactor=model_cfg.get('scale_factor', 0.00784313725490196),
+                    scalefactor=scale_val,
                     size=(input_width, input_height),
-                    mean=tuple(model_cfg.get('mean_values', [127.5, 127.5, 127.5])),
-                    swapRB=model_cfg.get('swap_rb', True),
-                    crop=False
+                    mean=tuple(mean_vals),
+                    swapRB=swap_rb,
+                    crop=bool(model_cfg.get('crop', False))
                 )
                 
                 # Prepare debug visualizations in a single window (1 window, 3 panels)
@@ -201,7 +209,8 @@ def main():
                                       int(cfg.get('display', {}).get('line_thickness', 2)))
 
                     panel_tr = roi_frame.copy()
-                    panel_br = cv2.cvtColor(resized_roi, cv2.COLOR_BGR2RGB)
+                    # Show exactly what is fed to the network (post-resize, pre-blob). Keep BGR as-is
+                    panel_br = resized_roi.copy()
 
                     # Target display grid: two columns of equal width; right column split into two equal rows
                     disp_cfg = cfg.get('display', {})

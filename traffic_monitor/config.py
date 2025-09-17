@@ -60,8 +60,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def load_runtime_config(args) -> Dict[str, object]:
     cfg: Dict[str, object] = dict(DEFAULT_CFG)
+    cfg_path: Path | None = None
     if getattr(args, 'config', None):
         cfg_path = Path(args.config)
+    else:
+        # Auto-load local config.json if present
+        default_path = Path('config.json')
+        if default_path.exists():
+            cfg_path = default_path
+    if cfg_path is not None:
         if not cfg_path.exists():
             logger.error(f"Config file not found: {cfg_path}")
         else:
