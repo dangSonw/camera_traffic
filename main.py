@@ -112,8 +112,11 @@ def main():
 
         # Prepare display window
         if args.show:
-            cv2.namedWindow('Traffic Monitor', cv2.WINDOW_NORMAL)
-            cv2.resizeWindow('Traffic Monitor', 1600, 1200)  # Initial size, can be resized later
+            try:
+                cv2.namedWindow('Detections', cv2.WINDOW_NORMAL)
+                cv2.resizeWindow('Detections', 1000, 800)
+            except Exception:
+                pass
 
         while True:
             if stop_event.is_set():
