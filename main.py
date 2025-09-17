@@ -8,6 +8,7 @@ import logging
 import traceback
 from typing import List, Tuple
 import threading
+import os
 from tracker import Tracker
 from traffic_monitor.system_utils import (
     start_quit_listener,
@@ -99,16 +100,60 @@ def main():
             pass
 
         # Load MobileNetSSD model
-        logger.info(f"Loading model: {Path(args.weights).name}")
-        net = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
+        use_tflite = getattr(args, 'backend', 'caffe') == 'tflite'
+        tflite_interpreter = None
+        if use_tflite:
+            import importlib
+            try:
+                tflite_runtime = importlib.import_module('tflite_runtime.interpreter')
+                TFLiteInterpreter = tflite_runtime.Interpreter
+            except Exception:
+                # fallback to full TF if present
+                from tensorflow.lite.python.interpreter import Interpreter as TFLiteInterpreter  # type: ignore
+            if not getattr(args, 'tflite', None):
+                logger.error("--tflite path is required when --backend tflite")
+                return 1
+            if not Path(args.tflite).exists():
+                logger.error(f"TFLite model not found: {args.tflite}")
+                return 1
+            logger.info(f"Loading TFLite model: {Path(args.tflite).name}")
+            tflite_interpreter = TFLiteInterpreter(model_path=args.tflite)
+            tflite_interpreter.allocate_tensors()
+            input_details = tflite_interpreter.get_input_details()
+            output_details = tflite_interpreter.get_output_details()
+            logger.info(f"TFLite inputs: {input_details}")
+            logger.info(f"TFLite outputs: {output_details}")
+        else:
+            logger.info(f"Loading model: {Path(args.weights).name}")
+            net = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
         
         # Set preferable backend and target (CPU by default)
-        net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-        net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        use_opencl = os.environ.get('OPENCV_DNN_OPENCL', '0') == '1'
+        backend = cv2.dnn.DNN_BACKEND_OPENCV
+        target = cv2.dnn.DNN_TARGET_CPU
+        if use_opencl and not use_tflite:
+            try:
+                # Try OpenCL FP16 first if available
+                cv2.ocl.setUseOpenCL(True)
+                if cv2.ocl.haveOpenCL():
+                    backend = cv2.dnn.DNN_BACKEND_OPENCV
+                    # On Pi OpenCL device often maps to FP16 capable; fallback to OPENCL
+                    try:
+                        target = cv2.dnn.DNN_TARGET_OPENCL_FP16
+                    except Exception:
+                        target = cv2.dnn.DNN_TARGET_OPENCL
+            except Exception:
+                pass
+        if not use_tflite:
+            net.setPreferableBackend(backend)
+            net.setPreferableTarget(target)
         try:
-            backend_name = 'OpenCV'
-            target_name = 'CPU'
-            logger.info(f"DNN backend: {backend_name}, target: {target_name}")
+            backend_name = {cv2.dnn.DNN_BACKEND_DEFAULT: 'Default', cv2.dnn.DNN_BACKEND_INFERENCE_ENGINE: 'IE', cv2.dnn.DNN_BACKEND_OPENCV: 'OpenCV'}.get(backend, str(backend))
+            target_name = {cv2.dnn.DNN_TARGET_CPU: 'CPU', cv2.dnn.DNN_TARGET_OPENCL: 'OpenCL', cv2.dnn.DNN_TARGET_OPENCL_FP16: 'OpenCLFP16'}.get(target, str(target))
+            if use_tflite:
+                logger.info("Backend: TFLite")
+            else:
+                logger.info(f"DNN backend: {backend_name}, target: {target_name}")
         except Exception:
             pass
         
@@ -339,9 +384,41 @@ def main():
                     cv2.imshow('Traffic Monitor', combined_disp)
                 
                 # Set input and run forward pass
-                net.setInput(blob)
-                pred = net.forward()
-
+                if use_tflite and tflite_interpreter is not None:
+                    # TFLite expects NHWC uint8/float32 depending on model
+                    inp = resized_roi
+                    input_details = tflite_interpreter.get_input_details()
+                    id0 = input_details[0]
+                    tensor = inp
+                    if id0["dtype"].__name__ == 'float32':
+                        tensor = (tensor.astype(np.float32) - np.array(mean_vals, dtype=np.float32)) * (scale_val if scale_val != 0 else 1.0)
+                    elif id0["dtype"].__name__ == 'uint8':
+                        tensor = tensor.astype(np.uint8)
+                    tensor = np.expand_dims(tensor, axis=0)
+                    tflite_interpreter.set_tensor(id0['index'], tensor)
+                    tflite_interpreter.invoke()
+                    # Common SSD MobileNet tflite outputs: boxes [1, N, 4], classes [1,N], scores [1,N], num [1]
+                    try:
+                        boxes = tflite_interpreter.get_tensor(tflite_interpreter.get_output_details()[0]['index'])[0]
+                        classes_out = tflite_interpreter.get_tensor(tflite_interpreter.get_output_details()[1]['index'])[0]
+                        scores = tflite_interpreter.get_tensor(tflite_interpreter.get_output_details()[2]['index'])[0]
+                        num = int(tflite_interpreter.get_tensor(tflite_interpreter.get_output_details()[3]['index'])[0])
+                    except Exception:
+                        # Fallback: single output case (convert to similar format)
+                        out0 = tflite_interpreter.get_tensor(tflite_interpreter.get_output_details()[0]['index'])
+                        # Not standardized; bail out
+                        boxes, classes_out, scores, num = np.empty((0,4)), np.empty((0,)), np.empty((0,)), 0
+                    # Build pred-like structure: [batch, 1, N, 7] as in Caffe (id, class, score, x1, y1, x2, y2)
+                    pred_list = []
+                    for i_ in range(num):
+                        score = float(scores[i_])
+                        class_id = int(classes_out[i_])
+                        y1, x1, y2, x2 = boxes[i_]
+                        pred_list.append([0.0, class_id, score, x1, y1, x2, y2])
+                    pred = np.array([[pred_list]], dtype=np.float32)
+                else:
+                    net.setInput(blob)
+                    pred = net.forward()
 
 
                 inference_time = time.time() - inference_start
@@ -502,7 +579,18 @@ def main():
 
                 cpu_line = f"SysCPU: {system_cpu:.0f}%"
 
-                print(f"\r{progress_bar} | Inf: {avg_inference:.0f}ms | FPS: {current_fps:.1f} | {cpu_line} | RAM: {ram_usage:.0f}MB ", end="", flush=True)
+                # concise, once-per-second style reporting using EMA
+                if 'ema_fps' not in locals():
+                    ema_fps = current_fps
+                    ema_inf = avg_inference
+                    last_print_t = 0.0
+                alpha = 0.2
+                ema_fps = (1 - alpha) * ema_fps + alpha * current_fps
+                ema_inf = (1 - alpha) * ema_inf + alpha * (avg_inference)
+                now = time.time()
+                if now - last_print_t >= 1.0:
+                    last_print_t = now
+                    print(f"\r{progress_bar} | FPS:{ema_fps:.1f} | INF:{ema_inf:.0f}ms | CPU:{system_cpu:.0f}% | RAM:{ram_usage:.0f}MB ", end="", flush=True)
 
             # Density window logging
             maybe_density = state.on_frame_end()

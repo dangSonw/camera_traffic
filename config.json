@@ -42,7 +42,7 @@
     "density_window": 10
   },
   "performance": {
-    "sample_interval_sec": 0.0,
-    "target_fps": 10.0
+    "sample_interval_sec": 0.5,
+    "target_fps": 12.0
   }
 }
