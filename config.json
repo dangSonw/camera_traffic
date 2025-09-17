@@ -1,13 +1,13 @@
 {
   "model": {
-    "input_width": 500,
-    "input_height": 500,
+    "input_width": 1420,
+    "input_height": 1080,
     "roi": {
       "enabled": true,
-      "x": 0.35,
-      "y": 0.4,
-      "width": 0.4,
-      "height": 0.6,
+      "x": 0.45,
+      "y": 0.50,
+      "width": 0.37,
+      "height": 0.54,
       "color": [0, 255, 0],
       "thickness": 10
     },
