@@ -38,12 +38,27 @@ def main():
     args = parser.parse_args()
 
     # Validate required model files
-    if not Path(args.weights).exists():
-        logger.error(f"Caffe model weights not found: {args.weights}")
-        return 1
-    if not Path(args.prototxt).exists():
-        logger.error(f"Caffe prototxt file not found: {args.prototxt}")
-        return 1
+    use_tflite = getattr(args, 'backend', 'caffe') == 'tflite'
+    if use_tflite:
+        if not getattr(args, 'tflite', None):
+            logger.error("--tflite path is required when --backend tflite")
+            return 1
+        if not Path(args.tflite).exists():
+            logger.error(f"TFLite model not found: {args.tflite}")
+            return 1
+    else:
+        if not getattr(args, 'weights', None):
+            logger.error("--weights is required when --backend caffe")
+            return 1
+        if not getattr(args, 'prototxt', None):
+            logger.error("--prototxt is required when --backend caffe")
+            return 1
+        if not Path(args.weights).exists():
+            logger.error(f"Caffe model weights not found: {args.weights}")
+            return 1
+        if not Path(args.prototxt).exists():
+            logger.error(f"Caffe prototxt file not found: {args.prototxt}")
+            return 1
     # Allow file path, webcam index, or network URL
     source_arg = str(args.source)
     is_url = source_arg.startswith(('rtsp://', 'http://', 'https://'))
@@ -100,7 +115,6 @@ def main():
             pass
 
         # Load MobileNetSSD model
-        use_tflite = getattr(args, 'backend', 'caffe') == 'tflite'
         tflite_interpreter = None
         if use_tflite:
             import importlib
@@ -110,12 +124,6 @@ def main():
             except Exception:
                 # fallback to full TF if present
                 from tensorflow.lite.python.interpreter import Interpreter as TFLiteInterpreter  # type: ignore
-            if not getattr(args, 'tflite', None):
-                logger.error("--tflite path is required when --backend tflite")
-                return 1
-            if not Path(args.tflite).exists():
-                logger.error(f"TFLite model not found: {args.tflite}")
-                return 1
             logger.info(f"Loading TFLite model: {Path(args.tflite).name}")
             tflite_interpreter = TFLiteInterpreter(model_path=args.tflite)
             tflite_interpreter.allocate_tensors()

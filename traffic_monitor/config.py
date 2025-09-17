@@ -32,8 +32,8 @@ DEFAULT_CFG: Dict[str, object] = {
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Traffic Monitoring with MobileNetSSD")
     # Model arguments
-    parser.add_argument('--weights', '--model', dest='weights', type=str, required=True, help='Path to Caffe model weights (.caffemodel)')
-    parser.add_argument('--prototxt', type=str, required=True, help="Path to Caffe 'deploy' prototxt file")
+    parser.add_argument('--weights', '--model', dest='weights', type=str, required=False, help='Path to Caffe model weights (.caffemodel)')
+    parser.add_argument('--prototxt', type=str, required=False, help="Path to Caffe 'deploy' prototxt file")
     parser.add_argument('--backend', type=str, default='caffe', choices=['caffe', 'tflite'], help='Inference backend: caffe (OpenCV DNN) or tflite')
     parser.add_argument('--tflite', type=str, default=None, help='Path to TFLite model (.tflite) when --backend tflite')
     
