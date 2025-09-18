@@ -22,7 +22,7 @@
   },
   "detection": {
     "conf_thresh": 0.50,
-    "allowed_classes": ["car", "bus", "motorbike"],
+    "allowed_classes": ["car", "bus", "motorbike", "person", "bicycle", "truck"],
     "nms_threshold": 0.4
   },
   "display": {
