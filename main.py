@@ -1,4 +1,4 @@
-import time
+import timedraw_hud
 import sys
 from pathlib import Path
 import torch
@@ -14,7 +14,6 @@ from traffic_monitor.system_utils import (
     start_quit_listener,
     SystemMonitor,
     setup_cpu_affinity,
-    write_init_log,
     print_progress_bar,
 )
 from traffic_monitor.config import build_arg_parser, load_runtime_config

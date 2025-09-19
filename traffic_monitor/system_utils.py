@@ -105,42 +105,6 @@ def setup_cpu_affinity(core_count: Optional[int]) -> List[int]:
     else:
         return list(range(psutil.cpu_count(logical=True)))
 
-
-def write_init_log(args, used_cores: List[int], processor):
-    try:
-        with open("log/init_log.txt", "w") as f:
-            f.write("=== ENHANCED INIT CONFIG ===\n")
-            f.write(f"Source: {args.source}\n")
-            f.write(f"Weights: {args.weights}\n")
-            f.write(f"Target FPS: {args.fps}\n")
-            f.write(f"Image size: {args.imgsz}\n")
-            f.write(f"CPU physical cores: {psutil.cpu_count(logical=False)}\n")
-            f.write(f"CPU logical threads: {psutil.cpu_count(logical=True)}\n")
-            f.write(f"Used cores: {used_cores}\n")
-            f.write(f"Model stride: {processor.stride}\n")
-            f.write(f"Model classes: {len(processor.names)}\n")
-            f.write(f"Device: {processor.device}\n")
-            f.write(f"PyTorch version: {torch.__version__}\n")
-            try:
-                f.write(f"OpenCV version: {cv2.__version__}\n")
-            except AttributeError:
-                f.write("OpenCV version: unknown\n")
-            try:
-                ultralytics = importlib.import_module('ultralytics')
-                f.write(f"Ultralytics version: {ultralytics.__version__}\n")
-            except (ImportError, AttributeError):
-                f.write("Ultralytics: not available\n")
-            f.write(f"Available RAM: {psutil.virtual_memory().total / (1024**3):.1f} GB\n")
-            try:
-                freq = psutil.cpu_freq()
-                f.write(f"CPU frequency: {freq.current:.0f} MHz\n")
-            except Exception:
-                pass
-        logger.info("Initialization log written successfully")
-    except Exception as e:
-        logger.error(f"Failed to write init log: {e}")
-
-
 def print_progress_bar(current, total, length=50):
     percent = float(current) / total
     hashes = '#' * int(round(percent * length))
