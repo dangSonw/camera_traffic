@@ -9,7 +9,7 @@ import traceback
 from typing import List, Tuple
 import threading
 import os
-from tracker import Tracker
+# Removed tracker import
 from traffic_monitor.system_utils import (
     start_quit_listener,
     SystemMonitor,
@@ -31,6 +31,25 @@ try:
 except Exception:
     msvcrt = None
 
+
+def point_in_polygon(point, polygon):
+    """Kiểm tra xem một điểm có nằm trong đa giác hay không."""
+    x, y = point
+    n = len(polygon)
+    inside = False
+
+    p1x, p1y = polygon[0]
+    for i in range(1, n + 1):
+        p2x, p2y = polygon[i % n]
+        if y > min(p1y, p2y):
+            if y <= max(p1y, p2y):
+                if x <= max(p1x, p2x):
+                    if p1y != p2y:
+                        xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                    if p1x == p2x or x <= xinters:
+                        inside = not inside
+        p1x, p1y = p2x, p2y
+    return inside
 
 def main():
     parser = build_arg_parser()
@@ -198,8 +217,7 @@ def main():
         total_inference_time = 0
         start_time = time.time()
 
-        # Tracker and counting state (simplified)
-        tracker = Tracker()
+        # Chỉ sử dụng CounterState để hiển thị thông tin
         state = CounterState(cfg)
 
         print("\n=== STARTING VIDEO PROCESSING ===")
@@ -270,30 +288,97 @@ def main():
                 except Exception:
                     input_width, input_height = 300, 300
                 
-                # Calculate ROI coordinates
+                # Calculate ROI coordinates - hình thang thay vì hình chữ nhật
                 if roi_cfg.get('enabled', False):
-                    # Calculate ROI in pixels
-                    roi_x = int(roi_cfg['x'] * w)
-                    roi_y = int(roi_cfg['y'] * h)
-                    roi_w = int(roi_cfg['width'] * w)
-                    roi_h = int(roi_cfg['height'] * h)
-                    
-                    # Extract ROI from frame
-                    roi_frame = frame[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
-                    
-                    # Draw ROI rectangle on the original frame
+                    # Lấy 4 tọa độ từ config dưới dạng tỉ lệ [0-1] và chuyển đổi thành pixel
+                    # points format: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]] theo thứ tự ngược chiều kim đồng hồ
+                    try:
+                        roi_points = roi_cfg.get('points', [[0.25,0.5], [0.75,0.5], [0.9,0.9], [0.1,0.9]])
+                        roi_pts_px = []
+                        for pt in roi_points:
+                            x = int(pt[0] * w)
+                            y = int(pt[1] * h)
+                            roi_pts_px.append([x, y])
+                    except Exception as e:
+                        logger.warning(f"Lỗi khi chuyển đổi tọa độ ROI: {e}")
+                        # Dùng giá trị mặc định nếu lỗi
+                        roi_pts_px = [
+                            [int(0.25 * w), int(0.5 * h)],  # top-left
+                            [int(0.75 * w), int(0.5 * h)],  # top-right
+                            [int(0.9 * w), int(0.9 * h)],   # bottom-right
+                            [int(0.1 * w), int(0.9 * h)]    # bottom-left
+                        ]
+
+                    # Tạo mask cho vùng ROI
+                    mask = np.zeros((h, w), dtype=np.uint8)
+                    pts = np.array(roi_pts_px, np.int32)
+                    pts = pts.reshape((-1, 1, 2))
+                    cv2.fillPoly(mask, [pts], 255)
+
+                    # Áp dụng mask cho frame để tạo ROI
+                    roi_frame = cv2.bitwise_and(frame, frame, mask=mask)
+
+                    # Tìm bounding box của ROI để cắt frame
+                    x_min = min(pt[0] for pt in roi_pts_px)
+                    y_min = min(pt[1] for pt in roi_pts_px)
+                    x_max = max(pt[0] for pt in roi_pts_px)
+                    y_max = max(pt[1] for pt in roi_pts_px)
+
+                    # Cắt frame theo bounding box
+                    roi_rect = roi_frame[y_min:y_max, x_min:x_max]
+
+                    # Lưu lại tọa độ bounding box để dùng sau này
+                    roi_x, roi_y = x_min, y_min
+                    roi_w, roi_h = x_max - x_min, y_max - y_min
+
+                    # Vẽ đường biên hình thang ROI trên frame gốc
                     color = roi_cfg.get('color', [0, 255, 0])  # Default green
                     thickness = roi_cfg.get('thickness', 2)
-                    cv2.rectangle(frame, (roi_x, roi_y), 
-                                (roi_x + roi_w, roi_y + roi_h), 
-                                color, thickness)
+                    cv2.polylines(frame, [pts], True, color, thickness)
+
                 else:
                     # Use full frame if ROI is disabled
-                    roi_frame = frame
+                    roi_frame = frame.copy()
+                    roi_rect = frame.copy()
                     roi_x, roi_y = 0, 0
+                    roi_w, roi_h = w, h
+                    # Tạo mask cho toàn bộ frame
+                    mask = np.ones((h, w), dtype=np.uint8) * 255
                 
                 # Resize ROI to model input size
-                resized_roi = cv2.resize(roi_frame, (input_width, input_height))
+                # Sử dụng roi_rect (đã cắt theo bounding box) nếu có, nếu không sử dụng roi_frame
+                if 'roi_rect' in locals() and roi_rect is not None and roi_rect.size > 0:
+                    resized_roi = cv2.resize(roi_rect, (input_width, input_height))
+                else:
+                    # Fallback nếu không thể tạo roi_rect
+                    resized_roi = cv2.resize(roi_frame, (input_width, input_height))
+
+                # Vẽ hình thang vào ảnh đã resize (đầu vào model)
+                if roi_cfg.get('enabled', False) and 'roi_pts_px' in locals():
+                    # Tạo bản sao để vẽ
+                    model_input_vis = resized_roi.copy()
+
+                    # Tính lại tỷ lệ từ kích thước ROI sang kích thước model
+                    scale_x = input_width / roi_w
+                    scale_y = input_height / roi_h
+
+                    model_pts = []
+                    for pt in roi_pts_px:
+                        model_x = int((pt[0] - roi_x) * scale_x)
+                        model_y = int((pt[1] - roi_y) * scale_y)
+                        # Đảm bảo tọa độ nằm trong phạm vi ảnh
+                        model_x = max(0, min(model_x, input_width - 1))
+                        model_y = max(0, min(model_y, input_height - 1))
+                        model_pts.append([model_x, model_y])
+
+                    # Vẽ đa giác lên ảnh model_input_vis
+                    model_pts_array = np.array(model_pts, np.int32)
+                    model_pts_array = model_pts_array.reshape((-1, 1, 2))
+                    cv2.polylines(model_input_vis, [model_pts_array], True, (0, 0, 255), 2)
+
+                    # Lưu lại để hiển thị trong panel dưới bên phải (thay vì roi_vis ban đầu)
+                    if 'panel_br' in locals():
+                        panel_br = model_input_vis
 
                 # MobileNetSSD Caffe expects BGR input, scale=0.007843..., mean=127.5, no RGB swap
                 scale_val = float(model_cfg.get('scale_factor', 0.00784313725490196))
@@ -320,29 +405,23 @@ def main():
                                       (0, 255, 0),
                                       int(cfg.get('display', {}).get('line_thickness', 2)))
 
-                    # Draw purple/blue horizontal lines on the left panel (with shadow + labels)
+                    # Tính toán các giá trị purple_y và blue_y (nhưng không vẽ chúng)
                     try:
                         disp_cfg_local = cfg.get('display', {})
                         H_full, W_full = panel_left.shape[:2]
                         purple_y = int(float(disp_cfg_local.get('purple_ratio', 0.5)) * H_full)
                         blue_y = int(float(disp_cfg_local.get('blue_ratio', 0.875)) * H_full)
-                        line_th = max(2, int(disp_cfg_local.get('line_thickness', 2)))
-                        # Shadow lines for visibility
-                        cv2.line(panel_left, (0, purple_y+1), (W_full - 1, purple_y+1), (0, 0, 0), line_th + 2)
-                        cv2.line(panel_left, (0, blue_y+1), (W_full - 1, blue_y+1), (0, 0, 0), line_th + 2)
-                        # Colored lines
-                        cv2.line(panel_left, (0, purple_y), (W_full - 1, purple_y), (255, 0, 255), line_th)
-                        cv2.line(panel_left, (0, blue_y), (W_full - 1, blue_y), (255, 0, 0), line_th)
-                        # Labels
-                        cv2.putText(panel_left, f"Purple y={purple_y}", (10, max(20, purple_y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
-                        cv2.putText(panel_left, f"Blue y={blue_y}", (10, min(H_full - 10, blue_y + 24)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
-                        # Debug print for first few frames
+                        # Giữ lại để debug nhưng không vẽ các đường
                         if frame_count <= 5:
-                            logger.info(f"Lines: purple_y={purple_y}, blue_y={blue_y}, thickness={line_th}, H={H_full}")
+                            logger.info(f"Reference points: purple_y={purple_y}, blue_y={blue_y}, H={H_full}")
                     except Exception:
                         pass
 
-                    panel_tr = roi_frame.copy()
+                    # Panel trên bên phải hiển thị ROI với hình thang
+                    if 'roi_rect' in locals() and roi_rect is not None and roi_rect.size > 0:
+                        panel_tr = roi_rect.copy()
+                    else:
+                        panel_tr = roi_frame.copy()
                     # Bottom-right shows detections drawn on ROI if any; otherwise blank
                     if 'roi_vis' in locals() and len(detections_kept) > 0:
                         panel_br = roi_vis
@@ -494,29 +573,67 @@ def main():
                 # Get display configuration
                 display_cfg = cfg.get('display', {})
                 H, W = canvas.shape[:2]
-                purple_y = int(display_cfg.get("purple_ratio", 0.5) * H)
-                blue_y = int(display_cfg.get("blue_ratio", 0.875) * H)
-                line_margin = max(2, int(H * display_cfg.get("line_margin_factor", 0.01)))
-                min_delta = max(2, int(H * display_cfg.get("min_delta_factor", 0.0033)))
 
-                # Filter rects to ROI (center below purple_y)
-                if rects:
+                # Lọc rects dựa trên vùng ROI hình thang
+                if rects and roi_cfg.get('enabled', False):
                     filtered_rects: List[Tuple[int, int, int, int]] = []
+
                     for (x, y, w, h) in rects:
-                        cy = (y + y + h) // 2
-                        if cy >= purple_y:
+                        # Tính tâm của đối tượng
+                        cx = x + w // 2
+                        cy = y + h // 2
+
+                        # Kiểm tra xem tâm có nằm trong đa giác ROI không
+                        if point_in_polygon((cx, cy), roi_pts_px):
                             filtered_rects.append((x, y, w, h))
+
                     rects = filtered_rects
+                    logger.debug(f"Detected {len(rects)} objects in ROI out of {len(detections_kept)}")
 
-                # Update tracker and counting state
-                tracked = tracker.update(rects)
-                id_colors = state.update(tracked, H, blue_y, line_margin, min_delta)
+                # Vẽ các đối tượng được phát hiện trực tiếp
+                object_count = 0
+                for (x, y, w, h) in rects:
+                    # Vẽ khung cho đối tượng
+                    cv2.rectangle(canvas, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-                # Draw overlays
-                draw_tracks(canvas, tracked, id_colors, state.histories, cfg)
+                    # Hiển thị thông tin lớp và độ tin cậy
+                    for det in detections_kept:
+                        if det[0] == x and det[1] == y and det[2] == w and det[3] == h:
+                            conf = det[4]
+                            class_id = det[5]
+                            classes_list = model_cfg.get('classes', [])
+                            label = f"{classes_list[class_id] if 0 <= class_id < len(classes_list) else class_id}:{conf:.2f}"
+                            cv2.putText(canvas, label, (x, max(0, y - 5)), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+                            break
+                    object_count += 1
+
+                # Cập nhật số lượng đối tượng cho trạng thái
+                state.window_count = object_count
+                state.total_count += object_count
+
+                # Hiển thị tổng số đối tượng phát hiện được
+                cv2.putText(canvas, f"Objects: {object_count}", (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
                 # Build ROI visualization with detections for bottom-right panel
                 detections_exist = len(detections_kept) > 0
-                roi_vis = roi_frame.copy()
+
+                # Tạo ảnh hiển thị ROI với vùng hình thang
+                if 'roi_rect' in locals() and roi_rect is not None and roi_rect.size > 0:
+                    roi_vis = roi_rect.copy()
+                else:
+                    roi_vis = roi_frame.copy()
+
+                # Vẽ đa giác ROI trên ảnh roi_vis nếu ROI được kích hoạt
+                if roi_cfg.get('enabled', False) and 'roi_pts_px' in locals():
+                    # Tính lại tọa độ cho ảnh đã cắt
+                    local_pts = []
+                    for pt in roi_pts_px:
+                        local_pts.append([pt[0] - roi_x, pt[1] - roi_y])
+                    local_pts_array = np.array(local_pts, np.int32)
+                    local_pts_array = local_pts_array.reshape((-1, 1, 2))
+                    cv2.polylines(roi_vis, [local_pts_array], True, (0, 255, 255), 2)
+
                 if detections_exist:
                     classes_list = model_cfg.get('classes', [])
                     for x, y, bw, bh, conf, cid in detections_kept:
@@ -539,7 +656,12 @@ def main():
                             cv2.rectangle(roi_vis, (lx, ly), (lx2, ly2), (0, 255, 0), 2)
                             label = f"{classes_list[cid] if 0 <= cid < len(classes_list) else cid}:{conf:.2f}"
                             cv2.putText(roi_vis, label, (lx, max(0, ly - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
-                draw_hud(canvas, purple_y, blue_y, cfg, state.total_count, state.window_count)
+                # Vẽ HUD đơn giản không sử dụng purple_y và blue_y
+                # Hiển thị số đối tượng và thời gian xử lý
+                cv2.putText(canvas, f"Objects: {len(rects)}", (10, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+                cv2.putText(canvas, f"Inference: {inference_time*1000:.1f}ms", (10, 60), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
 
                 # Handle 'q' on the single window (only when displaying)
                 if should_update_display:
@@ -599,10 +721,10 @@ def main():
                     last_print_t = now
                     print(f"\r{progress_bar} | FPS:{ema_fps:.1f} | INF:{ema_inf:.0f}ms | CPU:{system_cpu:.0f}% | RAM:{ram_usage:.0f}MB ", end="", flush=True)
 
-            # Density window logging
-            maybe_density = state.on_frame_end()
-            if maybe_density is not None:
-                print(f"\n[Density] {maybe_density} objects/{int(cfg.get('density_window', 10))} frames (cumulative count: {state.total_count})")
+            # Density window logging - đơn giản hóa
+            if frame_count % int(cfg.get('density_window', 10)) == 0:
+                density = len(rects)
+                print(f"\n[Density] {density} objects detected in current frame (frame: {frame_count})")
 
             if frame_count % 100 == 0:
                 avg_inference = total_inference_time / frame_count * 1000
