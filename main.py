@@ -1,4 +1,4 @@
-import timedraw_hud
+import time
 import sys
 from pathlib import Path
 import torch
