@@ -59,3 +59,5 @@
   // Tốc độ tối đa (pixel/frame) để loại bỏ outlier
   "tracker_max_speed": 80.0
 }
+
+python main.py --backend caffe --prototxt models/MobileNetSSD_deploy.prototxt --weights models/MobileNetSSD_deploy.caffemodel --source videos/GT1.MP4 --config config.json --fps 10 --core 4 --show
