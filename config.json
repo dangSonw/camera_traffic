@@ -1,6 +1,6 @@
 {
   "model": {
-    "input_width": 300,
+    "input_width": 950,
     "input_height": 300,
     "roi": {
       "enabled": true,
@@ -45,8 +45,8 @@
     "nms_threshold": 0.4
   },
   "display": {
-    "max_width": 1280,
-    "max_height": 720,
+    "max_width": 2000,
+    "max_height": 1500,
     "window_name": "Traffic Monitor",
     "detection_box": {
       "color": [0, 255, 0],
@@ -77,10 +77,10 @@
       },
       "counting_line": {
         "enabled": true,
-        "position": 0.5,
+        "position": 0.7,
         "color": [0, 0, 255],
-        "thickness": 3,
-        "extend_factor": 0.1
+        "thickness": 1,
+        "extend_factor": 0.0
       }
     }
   },

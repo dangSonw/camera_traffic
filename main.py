@@ -49,8 +49,8 @@ class ROIProcessor:
         self.color = tuple(self.roi_cfg.get('color', [0, 255, 0]))
         self.thickness = int(self.roi_cfg.get('thickness', 2))
         
-        # Load overlay config
-        self.overlay_cfg = cfg.get('display', {}).get('overlay', {})
+        # Load overlay config - SỬA ĐỂ KHỚP VỚI STRUCTURE JSON
+        self.overlay_cfg = cfg.get('processing', {}).get('display', {}).get('overlay', {})
         
         # Counting line config (chỉ cho rectangle)
         self.counting_cfg = self.overlay_cfg.get('counting_line', {})
@@ -79,7 +79,7 @@ class ROIProcessor:
         return np.array(pts, np.int32)
     
     def _calculate_counting_line(self) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
-        """Calculate counting line coordinates for rectangle ROI"""
+        """Calculate HORIZONTAL counting line coordinates for rectangle ROI"""
         if not self.counting_enabled or self.roi_type != 'rectangle' or len(self.pts_px) < 4:
             return None
             
@@ -90,15 +90,15 @@ class ROIProcessor:
         w = rect_cfg.get('width', 800)
         h = rect_cfg.get('height', 600)
         
-        # Calculate vertical line position (along width)
-        line_x = int(x + w * self.counting_line_pos)
+        # Calculate HORIZONTAL line position (along height)
+        line_y = int(y + h * self.counting_line_pos)
         
-        # Extend line beyond rectangle bounds
-        extend_height = int(h * self.counting_extend_factor)
-        line_y1 = y - extend_height
-        line_y2 = y + h + extend_height
+        # Extend line beyond rectangle bounds (horizontally)
+        extend_width = int(w * self.counting_extend_factor)
+        line_x1 = x - extend_width
+        line_x2 = x + w + extend_width
         
-        return ((line_x, line_y1), (line_x, line_y2))
+        return ((line_x1, line_y), (line_x2, line_y))
     
     def apply_roi(self, frame: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
         h, w = frame.shape[:2]
@@ -161,22 +161,22 @@ class ROIProcessor:
             cv2.line(frame, pt1, pt2, self.counting_line_color, self.counting_line_thickness)
     
     def count_objects_by_line(self, detections: List) -> CountingStats:
-        """Count objects before and after the counting line"""
+        """Count objects ABOVE and BELOW the horizontal counting line"""
         stats = CountingStats()
         
         if not self.counting_enabled or not self.counting_line_coords:
             return stats
             
-        line_x = self.counting_line_coords[0][0]  # X coordinate of vertical line
+        line_y = self.counting_line_coords[0][1]  # Y coordinate of horizontal line
         
         for x, y, w, h, conf, class_id in detections:
             # Use center point of detection box
-            center_x = x + w // 2
+            center_y = y + h // 2
             
-            if center_x < line_x:
-                stats.before_line += 1
+            if center_y < line_y:
+                stats.before_line += 1  # Above the line
             else:
-                stats.after_line += 1
+                stats.after_line += 1   # Below the line
                 
         return stats
     
@@ -188,7 +188,8 @@ class ROIProcessor:
 class DetectionProcessor:
     def __init__(self, cfg: Dict[str, Any], model_cfg: ModelConfig):
         self.model_cfg = model_cfg
-        det_cfg = cfg.get('detection', {})
+        # SỬA: Lấy detection config từ đúng path trong JSON
+        det_cfg = cfg.get('processing', {}).get('detection', {})
         self.conf_thresh = float(det_cfg.get('conf_thresh', 0.50))
         self.nms_thresh = float(det_cfg.get('nms_threshold', 0.4))
         self.allowed_classes = set(a.lower() for a in det_cfg.get('allowed_classes', []))
@@ -238,7 +239,8 @@ class DetectionProcessor:
 
 class Visualizer:
     def __init__(self, cfg: Dict[str, Any], show: bool):
-        display_cfg = cfg.get('display', {})
+        # SỬA: Lấy display config từ đúng path trong JSON
+        display_cfg = cfg.get('processing', {}).get('display', {})
         self.show = show
         self.max_w = int(display_cfg.get('max_width', 1280))
         self.max_h = int(display_cfg.get('max_height', 720))
@@ -258,8 +260,8 @@ class Visualizer:
         self.label_offset_x = int(self.label_cfg.get('offset_x', 2))
         self.label_offset_y = int(self.label_cfg.get('offset_y', 5))
         
-        # Counting display config
-        self.counting_cfg = cfg.get('counting', {})
+        # SỬA: Lấy counting config từ đúng path trong JSON
+        self.counting_cfg = cfg.get('processing', {}).get('counting', {})
         self.counting_enabled = self.counting_cfg.get('enabled', True)
         self.display_stats = self.counting_cfg.get('display_stats', True)
         
@@ -376,9 +378,9 @@ def main():
     args = parser.parse_args()
     
     try:
-        used_cores = setup_cpu_affinity(args.core)
-
         cfg = load_runtime_config(args)
+
+        setup_cpu_affinity(args.core)
         
         # Load model config from config file instead of hardcoded defaults
         model_cfg_dict = cfg.get('model', {})
