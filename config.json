@@ -39,72 +39,78 @@
     }
   },
   "processing": {
-  "detection": {
-    "conf_thresh": 0.50,
-    "allowed_classes": ["car", "bus", "motorbike", "person", "bicycle"],
-    "nms_threshold": 0.4
-  },
-  "display": {
-    "max_width": 2000,
-    "max_height": 1500,
-    "window_name": "Traffic Monitor",
-    "detection_box": {
-      "color": [0, 255, 0],
-      "thickness": 4
+    "traffic_light": {
+      "enabled": true,
+      "bound": 5,
+      "detection_interval": 2.0,
+      "buffer_size": 5
     },
-    "label": {
-      "font": "FONT_HERSHEY_SIMPLEX",
-      "scale": 1.0,
-      "color": [0, 199, 200],
-      "thickness": 2,
-      "offset_x": 2,
-      "offset_y": 5
+    "detection": {
+      "conf_thresh": 0.50,
+      "allowed_classes": ["car", "bus", "motorbike", "person", "bicycle"],
+      "nms_threshold": 0.4
     },
-    "overlay": {
-      "alpha": 0.2,
-      "background_alpha": 0.8,
-      "corners": {
-        "radius": 5,
-        "color": [0, 0, 255],
-        "border_color": [255, 255, 255],
-        "border_thickness": 1
+    "display": {
+      "max_width": 2000,
+      "max_height": 1500,
+      "window_name": "Traffic Monitor",
+      "detection_box": {
+        "color": [0, 255, 0],
+        "thickness": 4
       },
-      "roi_label": {
+      "label": {
         "font": "FONT_HERSHEY_SIMPLEX",
-        "scale": 0.7,
+        "scale": 1.0,
+        "color": [0, 199, 200],
         "thickness": 2,
-        "offset_y": 10
+        "offset_x": 2,
+        "offset_y": 5
       },
-      "counting_line": {
-        "enabled": true,
-        "position": 0.7,
-        "color": [0, 0, 255],
-        "thickness": 1,
-        "extend_factor": 0.0
+      "overlay": {
+        "alpha": 0.2,
+        "background_alpha": 0.8,
+        "corners": {
+          "radius": 5,
+          "color": [0, 0, 255],
+          "border_color": [255, 255, 255],
+          "border_thickness": 1
+        },
+        "roi_label": {
+          "font": "FONT_HERSHEY_SIMPLEX",
+          "scale": 0.7,
+          "thickness": 2,
+          "offset_y": 10
+        },
+        "counting_line": {
+          "enabled": true,
+          "position": 0.7,
+          "color": [0, 0, 255],
+          "thickness": 3,
+          "extend_factor": 0.0
+        }
       }
-    }
-  },
-  "counting": {
-    "enabled": true,
-    "display_stats": true,
-    "stats_position": {
-      "x": 50,
-      "y": 50
     },
-    "stats_font": {
-      "font": "FONT_HERSHEY_SIMPLEX",
-      "scale": 1.2,
-      "color": [255, 255, 255],
-      "thickness": 2,
-      "line_spacing": 35,
-      "background": {
-        "enabled": true,
-        "color": [0, 0, 0],
-        "alpha": 0.7,
-        "padding": 10
+    "counting": {
+      "enabled": true,
+      "display_stats": true,
+      "stats_position": {
+        "x": 50,
+        "y": 50
+      },
+      "stats_font": {
+        "font": "FONT_HERSHEY_SIMPLEX",
+        "scale": 1.2,
+        "color": [255, 255, 255],
+        "thickness": 2,
+        "line_spacing": 35,
+        "background": {
+          "enabled": true,
+          "color": [0, 0, 0],
+          "alpha": 0.7,
+          "padding": 10
+        }
       }
-    }
-  },
+    },
     "default_fps": 30.0,
     "frame_interval_sleep": true,
     "progress_update_interval": 10,

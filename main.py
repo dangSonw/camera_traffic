@@ -6,11 +6,18 @@ from typing import List, Tuple, Optional, Dict, Any
 import os
 from dataclasses import dataclass
 from contextlib import contextmanager
+from collections import deque
+from enum import Enum
 
 from traffic_monitor.system_utils import (
     setup_cpu_affinity, print_progress_bar,
 )
 from traffic_monitor.config import build_arg_parser, load_runtime_config
+
+class TrafficLightState(Enum):
+    RED = "RED"
+    GREEN = "GREEN"
+    TRANSITION = "TRANSITION"
 
 @dataclass
 class ProcessingState:
@@ -39,28 +46,56 @@ class ModelConfig:
     crop: bool
     classes: List[str]
 
+@dataclass
+class TrafficMonitorState:
+    current_light: TrafficLightState = TrafficLightState.GREEN
+    last_detection_time: float = 0.0
+    detection_interval: float = 2.0  # Detect every 2 seconds
+    frame_buffer: deque = None
+    transition_counted: bool = False
+    bound: int = 5  # Default bound value
+    
+    def __post_init__(self):
+        if self.frame_buffer is None:
+            self.frame_buffer = deque(maxlen=5)
+
 class ROIProcessor:
     def __init__(self, cfg: Dict[str, Any]):
         self.cfg = cfg
         self.roi_cfg = cfg.get('model', {}).get('roi', {})
         self.enabled = self.roi_cfg.get('enabled', False)
         self.roi_type = self.roi_cfg.get('type', 'rectangle')
+        self.original_roi_type = self.roi_type  # Store original type
         self.pts_px = self._get_roi_points()
         self.color = tuple(self.roi_cfg.get('color', [0, 255, 0]))
         self.thickness = int(self.roi_cfg.get('thickness', 2))
         
-        # Load overlay config - SỬA ĐỂ KHỚP VỚI STRUCTURE JSON
+        # Store both ROI configurations
+        self.rect_config = self.roi_cfg.get('rectangle', {})
+        self.trapezoid_config = self.roi_cfg.get('trapezoid', {})
+        
+        # Load overlay config
         self.overlay_cfg = cfg.get('processing', {}).get('display', {}).get('overlay', {})
         
-        # Counting line config (chỉ cho rectangle)
+        # Counting line config (only for rectangle)
         self.counting_cfg = self.overlay_cfg.get('counting_line', {})
         self.counting_enabled = self.counting_cfg.get('enabled', True) and self.roi_type == 'rectangle'
-        self.counting_line_pos = float(self.counting_cfg.get('position', 0.5))  # 0.0 to 1.0
+        self.counting_line_pos = float(self.counting_cfg.get('position', 0.5))
         self.counting_line_color = tuple(self.counting_cfg.get('color', [0, 0, 255]))
         self.counting_line_thickness = int(self.counting_cfg.get('thickness', 3))
         self.counting_extend_factor = float(self.counting_cfg.get('extend_factor', 0.1))
         
         # Calculate counting line coordinates
+        self.counting_line_coords = self._calculate_counting_line()
+    
+    def switch_roi_type(self, new_type: str):
+        """Switch between rectangle and trapezoid ROI types"""
+        if new_type not in ['rectangle', 'trapezoid']:
+            return
+        
+        self.roi_type = new_type
+        self.pts_px = self._get_roi_points()
+        self.counting_enabled = self.counting_cfg.get('enabled', True) and self.roi_type == 'rectangle'
         self.counting_line_coords = self._calculate_counting_line()
         
     def _get_roi_points(self) -> np.ndarray:
@@ -68,10 +103,10 @@ class ROIProcessor:
             return np.array([])
             
         if self.roi_type == 'trapezoid':
-            pts = self.roi_cfg.get('trapezoid', {}).get('points', 
+            pts = self.trapezoid_config.get('points', 
                 [[300, 300], [1000, 300], [1200, 800], [100, 800]])
         else:  # rectangle
-            rect = self.roi_cfg.get('rectangle', {})
+            rect = self.rect_config
             x, y = rect.get('x', 400), rect.get('y', 300)
             w, h = rect.get('width', 800), rect.get('height', 600)
             pts = [[x, y], [x+w, y], [x+w, y+h], [x, y+h]]
@@ -84,7 +119,7 @@ class ROIProcessor:
             return None
             
         # Get rectangle bounds
-        rect_cfg = self.roi_cfg.get('rectangle', {})
+        rect_cfg = self.rect_config
         x = rect_cfg.get('x', 400)
         y = rect_cfg.get('y', 300)
         w = rect_cfg.get('width', 800)
@@ -119,19 +154,26 @@ class ROIProcessor:
         
         return cropped, (x_min, y_min, x_max - x_min, y_max - y_min)
     
-    def draw_overlay(self, frame: np.ndarray) -> None:
+    def draw_overlay(self, frame: np.ndarray, traffic_state: TrafficLightState = None) -> None:
         if not self.enabled or len(self.pts_px) == 0: 
             return
             
-        # Use config values instead of hardcoded
+        # Use different colors based on traffic light state
+        if traffic_state == TrafficLightState.RED:
+            overlay_color = (0, 0, 255)  # Red
+        elif traffic_state == TrafficLightState.GREEN:
+            overlay_color = (0, 255, 0)  # Green
+        else:
+            overlay_color = self.color  # Default color
+            
         overlay_alpha = float(self.overlay_cfg.get('alpha', 0.2))
         background_alpha = float(self.overlay_cfg.get('background_alpha', 0.8))
         
         overlay = frame.copy()
-        cv2.fillPoly(overlay, [self.pts_px], self.color)
+        cv2.fillPoly(overlay, [self.pts_px], overlay_color)
         cv2.addWeighted(overlay, overlay_alpha, frame, background_alpha, 0, frame)
   
-        cv2.polylines(frame, [self.pts_px], True, self.color, self.thickness)
+        cv2.polylines(frame, [self.pts_px], True, overlay_color, self.thickness)
         
         # Draw corner points with config
         corner_cfg = self.overlay_cfg.get('corners', {})
@@ -144,16 +186,20 @@ class ROIProcessor:
             cv2.circle(frame, tuple(pt), corner_radius, corner_color, -1)
             cv2.circle(frame, tuple(pt), corner_radius + 2, corner_border_color, corner_border_thickness)
             
-        # Draw ROI label with config
+        # Draw ROI label with traffic light state
         label_cfg = self.overlay_cfg.get('roi_label', {})
         font = getattr(cv2, label_cfg.get('font', 'FONT_HERSHEY_SIMPLEX'))
         font_scale = float(label_cfg.get('scale', 0.7))
         font_thickness = int(label_cfg.get('thickness', 2))
         label_offset_y = int(label_cfg.get('offset_y', 10))
         
-        cv2.putText(frame, f"ROI: {self.roi_type.upper()}", 
+        roi_label = f"ROI: {self.roi_type.upper()}"
+        if traffic_state:
+            roi_label += f" | Light: {traffic_state.value}"
+            
+        cv2.putText(frame, roi_label, 
                    (self.pts_px[0][0], self.pts_px[0][1] - label_offset_y), 
-                   font, font_scale, self.color, font_thickness)
+                   font, font_scale, overlay_color, font_thickness)
         
         # Draw counting line if enabled
         if self.counting_enabled and self.counting_line_coords:
@@ -180,6 +226,10 @@ class ROIProcessor:
                 
         return stats
     
+    def count_all_objects(self, detections: List) -> int:
+        """Count all objects in ROI (used for trapezoid)"""
+        return len(detections)
+    
     def point_in_roi(self, point: Tuple[int, int]) -> bool:
         if not self.enabled or len(self.pts_px) == 0:
             return True
@@ -188,7 +238,6 @@ class ROIProcessor:
 class DetectionProcessor:
     def __init__(self, cfg: Dict[str, Any], model_cfg: ModelConfig):
         self.model_cfg = model_cfg
-        # SỬA: Lấy detection config từ đúng path trong JSON
         det_cfg = cfg.get('processing', {}).get('detection', {})
         self.conf_thresh = float(det_cfg.get('conf_thresh', 0.50))
         self.nms_thresh = float(det_cfg.get('nms_threshold', 0.4))
@@ -239,7 +288,6 @@ class DetectionProcessor:
 
 class Visualizer:
     def __init__(self, cfg: Dict[str, Any], show: bool):
-        # SỬA: Lấy display config từ đúng path trong JSON
         display_cfg = cfg.get('processing', {}).get('display', {})
         self.show = show
         self.max_w = int(display_cfg.get('max_width', 1280))
@@ -260,7 +308,6 @@ class Visualizer:
         self.label_offset_x = int(self.label_cfg.get('offset_x', 2))
         self.label_offset_y = int(self.label_cfg.get('offset_y', 5))
         
-        # SỬA: Lấy counting config từ đúng path trong JSON
         self.counting_cfg = cfg.get('processing', {}).get('counting', {})
         self.counting_enabled = self.counting_cfg.get('enabled', True)
         self.display_stats = self.counting_cfg.get('display_stats', True)
@@ -295,8 +342,9 @@ class Visualizer:
                 cv2.putText(frame, label, (x + self.label_offset_x, y - self.label_offset_y),
                            self.label_font, self.label_scale, self.label_color, self.label_thickness)
     
-    def draw_counting_stats(self, frame: np.ndarray, stats: CountingStats) -> None:
-        """Draw counting statistics on frame"""
+    def draw_counting_stats(self, frame: np.ndarray, stats: CountingStats, 
+                           traffic_state: TrafficMonitorState = None) -> None:
+        """Draw counting statistics on frame with traffic light state"""
         if not self.display_stats or not self.counting_enabled:
             return
             
@@ -307,6 +355,11 @@ class Visualizer:
             f"Total: {stats.before_line + stats.after_line}"
         ]
         
+        # Add traffic light state info
+        if traffic_state:
+            texts.append(f"Traffic Light: {traffic_state.current_light.value}")
+            texts.append(f"Bound: {traffic_state.bound}")
+            
         # Calculate background rectangle if enabled
         if self.stats_bg_enabled:
             # Calculate text dimensions
@@ -329,8 +382,16 @@ class Visualizer:
         # Draw text lines
         for i, text in enumerate(texts):
             y_pos = self.stats_y + i * self.stats_line_spacing
+            # Use different color for traffic light status
+            color = self.stats_color
+            if i == 3 and traffic_state:  # Traffic light state line
+                if traffic_state.current_light == TrafficLightState.RED:
+                    color = (0, 0, 255)
+                elif traffic_state.current_light == TrafficLightState.GREEN:
+                    color = (0, 255, 0)
+                    
             cv2.putText(frame, text, (self.stats_x, y_pos),
-                       self.stats_font, self.stats_scale, self.stats_color, self.stats_thickness)
+                       self.stats_font, self.stats_scale, color, self.stats_thickness)
     
     def display(self, frame: np.ndarray):
         if not self.show:
@@ -352,17 +413,14 @@ def video_capture_context(source):
 def load_caffe_model(args, cfg: Dict[str, Any]):
     model = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
     
-    # Get backend and target from config instead of hardcoded
     backend_cfg = cfg.get('model', {}).get('backend', {})
     backend_name = backend_cfg.get('name', 'opencv').lower()
     target_name = backend_cfg.get('target', 'cpu').lower()
     use_opencl = backend_cfg.get('use_opencl', True)
     
-    # Default to OpenCV backend and CPU target
     backend = cv2.dnn.DNN_BACKEND_OPENCV
     target = cv2.dnn.DNN_TARGET_CPU
 
-    # Use OpenCL if available and enabled in config
     if use_opencl and os.environ.get('OPENCV_DNN_OPENCL', '0') == '1':
         cv2.ocl.setUseOpenCL(True)
         if cv2.ocl.haveOpenCL():
@@ -373,6 +431,55 @@ def load_caffe_model(args, cfg: Dict[str, Any]):
     
     return model
 
+def process_traffic_light_logic(traffic_state: TrafficMonitorState, 
+                               counting_stats: CountingStats,
+                               roi_processor: ROIProcessor) -> None:
+    """Process traffic light detection logic"""
+    
+    current_time = time.time()
+    
+    # Check if it's time for detection (every 2 seconds)
+    if current_time - traffic_state.last_detection_time < traffic_state.detection_interval:
+        # Still collecting frames
+        traffic_state.frame_buffer.append(counting_stats)
+        return
+    
+    # Time for detection - reset timer
+    traffic_state.last_detection_time = current_time
+    
+    # Calculate average from buffer
+    if len(traffic_state.frame_buffer) > 0:
+        avg_before = sum(s.before_line for s in traffic_state.frame_buffer) / len(traffic_state.frame_buffer)
+        avg_after = sum(s.after_line for s in traffic_state.frame_buffer) / len(traffic_state.frame_buffer)
+        difference = avg_before - avg_after
+        
+        if traffic_state.current_light == TrafficLightState.GREEN:
+            # Check if should turn RED
+            if difference > traffic_state.bound:
+                print(f"\n🔴 Traffic Light: GREEN -> RED (Difference: {difference:.1f} > {traffic_state.bound})")
+                traffic_state.current_light = TrafficLightState.RED
+                traffic_state.transition_counted = False
+                # Switch to trapezoid
+                roi_processor.switch_roi_type('trapezoid')
+                
+        elif traffic_state.current_light == TrafficLightState.RED:
+            # In trapezoid mode - count once
+            if not traffic_state.transition_counted:
+                # Count all objects in trapezoid (this will be done in main loop)
+                traffic_state.current_light = TrafficLightState.TRANSITION
+                traffic_state.transition_counted = True
+                
+            # Check if should turn GREEN (using before line count as proxy for congestion)
+            elif avg_before < traffic_state.bound:
+                print(f"\n🟢 Traffic Light: RED -> GREEN (Before line: {avg_before:.1f} < {traffic_state.bound})")
+                traffic_state.current_light = TrafficLightState.GREEN
+                # Switch back to rectangle
+                roi_processor.switch_roi_type('rectangle')
+    
+    # Clear buffer for next detection cycle
+    traffic_state.frame_buffer.clear()
+    traffic_state.frame_buffer.append(counting_stats)
+
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
@@ -382,7 +489,7 @@ def main():
 
         setup_cpu_affinity(args.core)
         
-        # Load model config from config file instead of hardcoded defaults
+        # Load model config
         model_cfg_dict = cfg.get('model', {})
         model_cfg = ModelConfig(
             input_width=int(model_cfg_dict.get('input_width', 300)),
@@ -394,16 +501,23 @@ def main():
             classes=model_cfg_dict.get('classes', [])
         )
         
+        # Initialize traffic monitoring state
+        traffic_cfg = cfg.get('processing', {}).get('traffic_light', {})
+        traffic_state = TrafficMonitorState(
+            bound=int(traffic_cfg.get('bound', 5)),
+            detection_interval=float(traffic_cfg.get('detection_interval', 2.0))
+        )
+        
         roi_processor = ROIProcessor(cfg)
         detection_processor = DetectionProcessor(cfg, model_cfg)
         visualizer = Visualizer(cfg, args.show)
         
-        # Load Caffe model with config
+        # Load Caffe model
         model = load_caffe_model(args, cfg)
         
         state = ProcessingState(start_time=time.time())
         
-        # Get processing config instead of hardcoded values
+        # Get processing config
         proc_cfg = cfg.get('processing', {})
         progress_interval = int(proc_cfg.get('progress_update_interval', 10))
         ema_alpha = float(proc_cfg.get('ema_alpha', 0.2))
@@ -422,6 +536,7 @@ def main():
             
             print(f"Video: {total_frames} frames @ {original_fps:.1f} FPS")
             print(f"Processing at: {args.fps} FPS")
+            print(f"Traffic Light Detection - Bound: {traffic_state.bound}, Interval: {traffic_state.detection_interval}s")
             
             while True:
                 loop_start = time.time()
@@ -434,9 +549,9 @@ def main():
                 
                 # ROI processing
                 roi_frame, roi_bbox = roi_processor.apply_roi(frame)
-                roi_processor.draw_overlay(frame)
+                roi_processor.draw_overlay(frame, traffic_state.current_light)
                 
-                # Prepare Caffe model input with config values
+                # Prepare Caffe model input
                 input_size = (model_cfg.input_width, model_cfg.input_height)
                 resized_roi = cv2.resize(roi_frame, input_size)
                 
@@ -464,19 +579,36 @@ def main():
                 filtered_dets = [d for d in detections 
                                 if roi_processor.point_in_roi((d[0] + d[2]//2, d[1] + d[3]//2))]
                 
-                # Count objects by counting line
-                counting_stats = roi_processor.count_objects_by_line(filtered_dets)
+                # Count objects
+                if roi_processor.roi_type == 'rectangle':
+                    counting_stats = roi_processor.count_objects_by_line(filtered_dets)
+                else:  # trapezoid
+                    # For trapezoid, count all objects
+                    total_count = roi_processor.count_all_objects(filtered_dets)
+                    counting_stats = CountingStats(before_line=total_count, after_line=0)
+                    
+                    # Print trapezoid count once during transition
+                    if traffic_state.current_light == TrafficLightState.TRANSITION and not traffic_state.transition_counted:
+                        print(f"\n📊 Trapezoid ROI - Total vehicles: {total_count}")
+                        traffic_state.transition_counted = True
+                        # Switch back to rectangle after counting
+                        roi_processor.switch_roi_type('rectangle')
+                        # Stay in RED state for next cycle
+                        traffic_state.current_light = TrafficLightState.RED
+                
+                # Process traffic light logic
+                process_traffic_light_logic(traffic_state, counting_stats, roi_processor)
                 
                 # Draw detections
                 visualizer.draw_detections(frame, filtered_dets, model_cfg.classes)
                 
-                # Draw counting statistics
-                visualizer.draw_counting_stats(frame, counting_stats)
+                # Draw counting statistics with traffic state
+                visualizer.draw_counting_stats(frame, counting_stats, traffic_state)
                 
-                # Calculate metrics with config values
+                # Calculate metrics
                 current_fps = 1.0 / max(time.time() - loop_start, min_loop_time)
                 
-                # Update EMA with config alpha
+                # Update EMA
                 if state.ema_fps is None:
                     state.ema_fps = current_fps
                     state.ema_inf = inference_time * 1000
@@ -486,13 +618,14 @@ def main():
                 
                 if visualizer.display(frame): break
 
-                # Use config for progress update interval
+                # Progress update
                 if state.frame_count % progress_interval == 0:
                     progress = print_progress_bar(state.frame_count, total_frames)
-                    print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)} | Before:{counting_stats.before_line} | After:{counting_stats.after_line}", 
+                    status_emoji = "🔴" if traffic_state.current_light == TrafficLightState.RED else "🟢"
+                    print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)} | Before:{counting_stats.before_line} | After:{counting_stats.after_line} | Light:{status_emoji}", 
                           end="", flush=True)
 
-                # Frame rate control with config
+                # Frame rate control
                 if frame_interval_sleep and frame_interval > 0:
                     elapsed = time.time() - loop_start
                     if elapsed < frame_interval:
