@@ -4,18 +4,15 @@
     "input_height": 300,
     "roi": {
       "enabled": true,
-      "type": "rectangle",
-      "rectangle": {
-        "x": 1650,
-        "y": 1500,
-        "width": 1900,
-        "height": 600
+      "type": "signal_region",
+      "signal_region": {
+        "y": 0.45
       },
-      "trapezoid": {
+      "full_region": {
         "points": [
           [1880, 1100],
-          [1500, 2100],
-          [4200, 2100],
+          [1380, 2100],
+          [4300, 2100],
           [2120, 1100]
         ]
       },
@@ -41,7 +38,7 @@
   "processing": {
     "traffic_light": {
       "enabled": true,
-      "bound": 10,
+      "bound": 8,
       "detection_interval": 2.0,
       "buffer_size": 5
     },

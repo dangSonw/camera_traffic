@@ -51,8 +51,9 @@ class TrafficMonitorState:
     last_detection_time: float = 0.0
     detection_interval: float = 2.0  # Detect every 2 seconds
     frame_buffer: deque = None
-    transition_counted: bool = False
     bound: int = 5  # Default bound value
+    full_region_count: int = 0
+    consecutive_red_detections: int = 0
     
     def __post_init__(self):
         if self.frame_buffer is None:
@@ -63,12 +64,12 @@ class ROIProcessor:
         self.cfg = cfg
         self.roi_cfg = cfg.get('model', {}).get('roi', {})
         self.enabled = self.roi_cfg.get('enabled', False)
-        self.roi_type = self.roi_cfg.get('type', 'rectangle')
+        self.roi_type = self.roi_cfg.get('type', 'signal_region')
         self.original_roi_type = self.roi_type  # Store original type
         
-        # Store both ROI configurations
-        self.rect_config = self.roi_cfg.get('rectangle', {})
-        self.trapezoid_config = self.roi_cfg.get('trapezoid', {})
+        # Store ROI configurations
+        self.signal_region_config = self.roi_cfg.get('signal_region', {})
+        self.full_region_config = self.roi_cfg.get('full_region', {})
         
         self.pts_px = self._get_roi_points()
         self.color = tuple(self.roi_cfg.get('color', [0, 255, 0]))
@@ -77,9 +78,9 @@ class ROIProcessor:
         # Load overlay config
         self.overlay_cfg = cfg.get('processing', {}).get('display', {}).get('overlay', {})
         
-        # Counting line config (only for rectangle)
+        # Counting line config (only for signal_region)
         self.counting_cfg = self.overlay_cfg.get('counting_line', {})
-        self.counting_enabled = self.counting_cfg.get('enabled', True) and self.roi_type == 'rectangle'
+        self.counting_enabled = self.counting_cfg.get('enabled', True) and self.roi_type == 'signal_region'
         self.counting_line_pos = float(self.counting_cfg.get('position', 0.5))
         self.counting_line_color = tuple(self.counting_cfg.get('color', [0, 0, 255]))
         self.counting_line_thickness = int(self.counting_cfg.get('thickness', 3))
@@ -89,49 +90,87 @@ class ROIProcessor:
         self.counting_line_coords = self._calculate_counting_line()
     
     def switch_roi_type(self, new_type: str):
-        """Switch between rectangle and trapezoid ROI types"""
-        if new_type not in ['rectangle', 'trapezoid']:
+        """Switch between signal_region and full_region ROI types"""
+        if new_type not in ['signal_region', 'full_region']:
             return
         
         self.roi_type = new_type
         self.pts_px = self._get_roi_points()
-        self.counting_enabled = self.counting_cfg.get('enabled', True) and self.roi_type == 'rectangle'
+        self.counting_enabled = self.counting_cfg.get('enabled', True) and self.roi_type == 'signal_region'
         self.counting_line_coords = self._calculate_counting_line()
-        
+    
     def _get_roi_points(self) -> np.ndarray:
+        return self._get_roi_points_for_type(self.roi_type)
+    
+    def _get_roi_points_for_type(self, roi_type: str) -> np.ndarray:
         if not self.enabled:
             return np.array([])
             
-        if self.roi_type == 'trapezoid':
-            pts = self.trapezoid_config.get('points', 
+        if roi_type == 'full_region':
+            return np.array(self.full_region_config.get('points', 
+                [[300, 300], [1000, 300], [1200, 800], [100, 800]]), np.int32)
+        else:  # signal_region
+            # Get full_region points
+            full_pts = self.full_region_config.get('points', 
                 [[300, 300], [1000, 300], [1200, 800], [100, 800]])
-        else:  # rectangle
-            rect = self.rect_config
-            x, y = rect.get('x', 400), rect.get('y', 300)
-            w, h = rect.get('width', 800), rect.get('height', 600)
-            pts = [[x, y], [x+w, y], [x+w, y+h], [x, y+h]]
-        
-        return np.array(pts, np.int32)
+            if len(full_pts) < 4:
+                return np.array(full_pts, np.int32)
+            
+            # Assume points order: [top-left, bottom-left, bottom-right, top-right]
+            top_left, bottom_left, bottom_right, top_right = full_pts
+            
+            # Get y proportion (0 to 1)
+            y_prop = self.signal_region_config.get('y', 0.5)
+            y_prop = max(0.0, min(1.0, y_prop))  # Clamp to [0, 1]
+            
+            # Calculate height of full_region
+            top_y = min(top_left[1], top_right[1])
+            bottom_y = max(bottom_left[1], bottom_right[1])
+            height = bottom_y - top_y
+            
+            # Calculate y-coordinate for top edge of signal_region
+            signal_y = int(top_y + y_prop * height)
+            
+            # Interpolate x-coordinates for top points
+            # Left side: between top-left and bottom-left
+            t_left = (signal_y - top_left[1]) / (bottom_left[1] - top_left[1]) if bottom_left[1] != top_left[1] else 0
+            x_left = int(top_left[0] + t_left * (bottom_left[0] - top_left[0]))
+            
+            # Right side: between top-right and bottom-right
+            t_right = (signal_y - top_right[1]) / (bottom_right[1] - top_right[1]) if bottom_right[1] != top_right[1] else 0
+            x_right = int(top_right[0] + t_right * (bottom_right[0] - top_right[0]))
+            
+            # signal_region points: [top-left, bottom-left, bottom-right, top-right]
+            return np.array([[x_left, signal_y], bottom_left, bottom_right, [x_right, signal_y]], np.int32)
     
     def _calculate_counting_line(self) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
-        """Calculate HORIZONTAL counting line coordinates for rectangle ROI"""
-        if not self.counting_enabled or self.roi_type != 'rectangle' or len(self.pts_px) < 4:
+        """Calculate HORIZONTAL counting line coordinates for signal_region ROI (trapezoid)"""
+        if not self.counting_enabled or self.roi_type != 'signal_region' or len(self.pts_px) < 4:
             return None
             
-        # Get rectangle bounds
-        rect_cfg = self.rect_config
-        x = rect_cfg.get('x', 400)
-        y = rect_cfg.get('y', 300)
-        w = rect_cfg.get('width', 800)
-        h = rect_cfg.get('height', 600)
+        # Get signal_region points (trapezoid)
+        pts = self.pts_px
+        # Assume points order: [top-left, bottom-left, bottom-right, top-right]
+        top_y = min(pts[0][1], pts[3][1])  # Top of trapezoid
+        bottom_y = max(pts[1][1], pts[2][1])  # Bottom of trapezoid
+        height = bottom_y - top_y
         
-        # Calculate HORIZONTAL line position (along height)
-        line_y = int(y + h * self.counting_line_pos)
+        # Calculate line y-position based on counting_line_pos
+        line_y = int(top_y + height * self.counting_line_pos)
         
-        # Extend line beyond rectangle bounds (horizontally)
-        extend_width = int(w * self.counting_extend_factor)
-        line_x1 = x - extend_width
-        line_x2 = x + w + extend_width
+        # Interpolate x-coordinates at line_y
+        # Left side: between top-left (0) and bottom-left (1)
+        t_left = (line_y - pts[0][1]) / (pts[1][1] - pts[0][1]) if pts[1][1] != pts[0][1] else 0
+        line_x1 = int(pts[0][0] + t_left * (pts[1][0] - pts[0][0]))
+        
+        # Right side: between top-right (3) and bottom-right (2)
+        t_right = (line_y - pts[3][1]) / (pts[2][1] - pts[3][1]) if pts[2][1] != pts[3][1] else 0
+        line_x2 = int(pts[3][0] + t_right * (pts[2][0] - pts[3][0]))
+        
+        # Extend line beyond bounds
+        extend_width = int((line_x2 - line_x1) * self.counting_extend_factor)
+        line_x1 -= extend_width
+        line_x2 += extend_width
         
         return ((line_x1, line_y), (line_x2, line_y))
     
@@ -193,7 +232,7 @@ class ROIProcessor:
         font_thickness = int(label_cfg.get('thickness', 2))
         label_offset_y = int(label_cfg.get('offset_y', 10))
         
-        roi_label = f"ROI: {self.roi_type.upper()}"
+        roi_label = f"ROI: {'Signal Detection' if self.roi_type == 'signal_region' else 'Full Detection'}"
         if traffic_state:
             roi_label += f" | Light: {traffic_state.value}"
             
@@ -201,6 +240,24 @@ class ROIProcessor:
                    (self.pts_px[0][0], self.pts_px[0][1] - label_offset_y), 
                    font, font_scale, overlay_color, font_thickness)
         
+        # Draw additional full_region when in RED and main is signal_region
+        if traffic_state == TrafficLightState.RED and self.roi_type == 'signal_region':
+            extra_color = (255, 0, 0)  # Blue for extra
+            extra_pts = self._get_roi_points_for_type('full_region')
+            if len(extra_pts) > 0:
+                cv2.fillPoly(overlay, [extra_pts], extra_color)
+                cv2.addWeighted(overlay, overlay_alpha, frame, background_alpha, 0, frame)
+                cv2.polylines(frame, [extra_pts], True, extra_color, self.thickness)
+                # Draw corners for extra
+                for pt in extra_pts:
+                    cv2.circle(frame, tuple(pt), corner_radius, corner_color, -1)
+                    cv2.circle(frame, tuple(pt), corner_radius + 2, corner_border_color, corner_border_thickness)
+                # Extra label
+                extra_label = "Extra ROI: Full Detection"
+                cv2.putText(frame, extra_label, 
+                            (extra_pts[0][0], extra_pts[0][1] - label_offset_y), 
+                            font, font_scale, extra_color, font_thickness)
+    
         # Draw counting line if enabled
         if self.counting_enabled and self.counting_line_coords:
             pt1, pt2 = self.counting_line_coords
@@ -227,7 +284,7 @@ class ROIProcessor:
         return stats
     
     def count_all_objects(self, detections: List) -> int:
-        """Count all objects in ROI (used for trapezoid)"""
+        """Count all objects in ROI (used for full_region)"""
         return len(detections)
     
     def point_in_roi(self, point: Tuple[int, int]) -> bool:
@@ -359,6 +416,8 @@ class Visualizer:
         if traffic_state:
             texts.append(f"Traffic Light: {traffic_state.current_light.value}")
             texts.append(f"Bound: {traffic_state.bound}")
+            if traffic_state.full_region_count > 0:
+                texts.append(f"Full Region Counts: {traffic_state.full_region_count}/5")
             
         # Calculate background rectangle if enabled
         if self.stats_bg_enabled:
@@ -398,7 +457,7 @@ class Visualizer:
             return False
         
         cv2.imshow(self.window_name, frame)
-        cv2.waitKey(1) 
+        return cv2.waitKey(1) == 27  # Return True if ESC is pressed
 
 @contextmanager
 def video_capture_context(source):
@@ -414,6 +473,8 @@ def load_caffe_model(args, cfg: Dict[str, Any]):
     model = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
     
     backend_cfg = cfg.get('model', {}).get('backend', {})
+    backend_name = backend_cfg.get('name', 'opencv').lower()
+    target_name = backend_cfg.get('target', 'cpu').lower()
     use_opencl = backend_cfg.get('use_opencl', True)
     
     backend = cv2.dnn.DNN_BACKEND_OPENCV
@@ -436,10 +497,10 @@ def process_traffic_light_logic(traffic_state: TrafficMonitorState,
     
     current_time = time.time()
     
+    traffic_state.frame_buffer.append(counting_stats)
+    
     # Check if it's time for detection (every 2 seconds)
     if current_time - traffic_state.last_detection_time < traffic_state.detection_interval:
-        # Still collecting frames
-        traffic_state.frame_buffer.append(counting_stats)
         return
     
     # Time for detection - reset timer
@@ -451,26 +512,30 @@ def process_traffic_light_logic(traffic_state: TrafficMonitorState,
         avg_after = sum(s.after_line for s in traffic_state.frame_buffer) / len(traffic_state.frame_buffer)
         difference = avg_before - avg_after
         
-        if traffic_state.current_light == TrafficLightState.GREEN:
-            # Check if should turn RED
-            if difference > traffic_state.bound:
-                print(f"\n🔴 Traffic Light: GREEN -> RED (Difference: {difference:.1f} > {traffic_state.bound})")
-                traffic_state.current_light = TrafficLightState.RED
-                traffic_state.transition_counted = False
-                # Switch to trapezoid
-                roi_processor.switch_roi_type('trapezoid')
-                
-        elif traffic_state.current_light == TrafficLightState.RED:
+        if traffic_state.current_light == TrafficLightState.RED:
             # Check if should turn GREEN
             if difference < traffic_state.bound:
                 print(f"\n🟢 Traffic Light: RED -> GREEN (Difference: {difference:.1f} < {traffic_state.bound})")
                 traffic_state.current_light = TrafficLightState.GREEN
-                # Switch back to rectangle
-                roi_processor.switch_roi_type('rectangle')
-    
-    # Clear buffer for next detection cycle
-    traffic_state.frame_buffer.clear()
-    traffic_state.frame_buffer.append(counting_stats)
+                roi_processor.switch_roi_type('full_region')
+                traffic_state.full_region_count = 0
+                traffic_state.consecutive_red_detections = 0
+        
+        elif traffic_state.current_light == TrafficLightState.GREEN:
+            if roi_processor.roi_type == 'full_region':
+                # Skip GREEN to RED check during counting phase
+                return
+            
+            # Check if should turn RED
+            if difference > traffic_state.bound:
+                traffic_state.consecutive_red_detections += 1
+                if traffic_state.consecutive_red_detections > 5:
+                    print(f"\n🔴 Traffic Light: GREEN -> RED (Difference: {difference:.1f} > {traffic_state.bound}) after {traffic_state.consecutive_red_detections} detections")
+                    traffic_state.current_light = TrafficLightState.RED
+                    roi_processor.switch_roi_type('signal_region')
+                    traffic_state.consecutive_red_detections = 0
+            else:
+                traffic_state.consecutive_red_detections = 0
 
 def main():
     parser = build_arg_parser()
@@ -496,8 +561,9 @@ def main():
         # Initialize traffic monitoring state
         traffic_cfg = cfg.get('processing', {}).get('traffic_light', {})
         traffic_state = TrafficMonitorState(
-            bound=int(traffic_cfg.get('bound', 10)),
-            detection_interval=float(traffic_cfg.get('detection_interval', 2.0))
+            bound=int(traffic_cfg.get('bound', 5)),
+            detection_interval=float(traffic_cfg.get('detection_interval', 2.0)),
+            frame_buffer=deque(maxlen=traffic_cfg.get('buffer_size', 5))
         )
         
         roi_processor = ROIProcessor(cfg)
@@ -514,7 +580,6 @@ def main():
         progress_interval = int(proc_cfg.get('progress_update_interval', 10))
         ema_alpha = float(proc_cfg.get('ema_alpha', 0.2))
         min_loop_time = float(proc_cfg.get('min_loop_time', 1e-6))
-        frame_interval_sleep = bool(proc_cfg.get('frame_interval_sleep', True))
         
         # Get video config
         video_cfg = cfg.get('video', {})
@@ -522,26 +587,46 @@ def main():
         
         # Main processing loop
         with video_capture_context(args.source) as cap:
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if not str(args.source).isdigit() else -1
             original_fps = cap.get(cv2.CAP_PROP_FPS) or default_fps_fallback
-            frame_interval = 1.0 / args.fps if frame_interval_sleep else 0
+            last_process_time = time.time() - traffic_state.detection_interval  # Start immediately
             
+            print(f"Video: {total_frames if total_frames >= 0 else 'unknown'} frames @ {original_fps:.1f} FPS")
+            print(f"Processing every {traffic_state.detection_interval}s")
+            print(f"Traffic Light Detection - Bound: {traffic_state.bound}, Interval: {traffic_state.detection_interval}s")
+            
+            frame_idx = -1
             while True:
                 loop_start = time.time()
+                frame_idx += 1
+                
                 ret, frame = cap.read()
                 if not ret:
                     print("\nEnd of video")
                     break
                 
+                # Skip frames until 2 seconds have passed
+                current_time = time.time()
+                if current_time - last_process_time < traffic_state.detection_interval:
+                    if str(args.source).isdigit():  # Camera: always use latest frame at detection time
+                        continue
+                    else:  # Video: skip frame
+                        continue
+                
                 state.frame_count += 1
+                last_process_time = current_time
                 
                 # ROI processing
                 roi_frame, roi_bbox = roi_processor.apply_roi(frame)
                 roi_processor.draw_overlay(frame, traffic_state.current_light)
                 
                 # Prepare Caffe model input
-                input_size = (model_cfg.input_width, model_cfg.input_height)
-                resized_roi = cv2.resize(roi_frame, input_size)
+                if roi_processor.roi_type == 'full_region':
+                    input_size = (roi_frame.shape[1], roi_frame.shape[0])
+                    resized_roi = roi_frame.copy()
+                else:
+                    input_size = (model_cfg.input_width, model_cfg.input_height)
+                    resized_roi = cv2.resize(roi_frame, input_size)
                 
                 # Caffe inference
                 inference_start = time.time()
@@ -568,19 +653,17 @@ def main():
                                 if roi_processor.point_in_roi((d[0] + d[2]//2, d[1] + d[3]//2))]
                 
                 # Count objects
-                if roi_processor.roi_type == 'rectangle':
+                if roi_processor.roi_type == 'signal_region':
                     counting_stats = roi_processor.count_objects_by_line(filtered_dets)
-                else:  # trapezoid
-                    # For trapezoid, count all objects
+                else:  # full_region
+                    # For full_region, count all objects
                     total_count = roi_processor.count_all_objects(filtered_dets)
                     counting_stats = CountingStats(before_line=total_count, after_line=0)
-                    
-                    # Print trapezoid count once
-                    if traffic_state.current_light == TrafficLightState.RED and not traffic_state.transition_counted:
-                        print(f"\n📊 Trapezoid ROI - Total vehicles: {total_count}")
-                        traffic_state.transition_counted = True
-                        # Switch back to rectangle after counting
-                        roi_processor.switch_roi_type('rectangle')
+                    print(f"\n📊 Full Detection ROI - Total vehicles: {total_count}")
+                    traffic_state.full_region_count += 1
+                    if traffic_state.full_region_count >= 5:
+                        roi_processor.switch_roi_type('signal_region')
+                        traffic_state.full_region_count = 0
                 
                 # Process traffic light logic
                 process_traffic_light_logic(traffic_state, counting_stats, roi_processor)
@@ -592,7 +675,7 @@ def main():
                 visualizer.draw_counting_stats(frame, counting_stats, traffic_state)
                 
                 # Calculate metrics
-                current_fps = 1.0 / max(time.time() - loop_start, min_loop_time)
+                current_fps = 1.0 / max(current_time - loop_start, min_loop_time)
                 
                 # Update EMA
                 if state.ema_fps is None:
@@ -602,20 +685,16 @@ def main():
                     state.ema_fps = (1 - ema_alpha) * state.ema_fps + ema_alpha * current_fps
                     state.ema_inf = (1 - ema_alpha) * state.ema_inf + ema_alpha * (inference_time * 1000)
                 
-                if visualizer.display(frame): break
+                if visualizer.display(frame):
+                    print("\nStopped by user (ESC)")
+                    break
 
                 # Progress update
                 if state.frame_count % progress_interval == 0:
-                    progress = print_progress_bar(state.frame_count, total_frames)
+                    progress = print_progress_bar(state.frame_count, total_frames) if total_frames >= 0 else f"Frame {state.frame_count}"
                     status_emoji = "🔴" if traffic_state.current_light == TrafficLightState.RED else "🟢"
                     print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)} | Before:{counting_stats.before_line} | After:{counting_stats.after_line} | Light:{status_emoji}", 
                           end="", flush=True)
-
-                # Frame rate control
-                if frame_interval_sleep and frame_interval > 0:
-                    elapsed = time.time() - loop_start
-                    if elapsed < frame_interval:
-                        time.sleep(frame_interval - elapsed)
         
     except KeyboardInterrupt:
         print("\nInterrupted by user (Ctrl+C)")
