@@ -49,9 +49,9 @@ class ModelConfig:
 class TrafficMonitorState:
     current_light: TrafficLightState = TrafficLightState.GREEN
     last_detection_time: float = 0.0
-    detection_interval: float = 2.0  # Detect every 2 seconds
+    detection_interval: float = 2.0  
     frame_buffer: deque = None
-    bound: int = 5  # Default bound value
+    bound: int = 5 
     full_region_count: int = 0
     consecutive_red_detections: int = 0
     
@@ -65,20 +65,13 @@ class ROIProcessor:
         self.roi_cfg = cfg.get('model', {}).get('roi', {})
         self.enabled = self.roi_cfg.get('enabled', False)
         self.roi_type = self.roi_cfg.get('type', 'signal_region')
-        self.original_roi_type = self.roi_type  # Store original type
-        
-        # Store ROI configurations
+        self.original_roi_type = self.roi_type  
         self.signal_region_config = self.roi_cfg.get('signal_region', {})
         self.full_region_config = self.roi_cfg.get('full_region', {})
-        
         self.pts_px = self._get_roi_points()
         self.color = tuple(self.roi_cfg.get('color', [0, 255, 0]))
         self.thickness = int(self.roi_cfg.get('thickness', 2))
-        
-        # Load overlay config
         self.overlay_cfg = cfg.get('processing', {}).get('display', {}).get('overlay', {})
-        
-        # Counting line config (only for signal_region)
         self.counting_cfg = self.overlay_cfg.get('counting_line', {})
         self.counting_enabled = self.counting_cfg.get('enabled', True) and self.roi_type == 'signal_region'
         self.counting_line_pos = float(self.counting_cfg.get('position', 0.5))
@@ -86,11 +79,9 @@ class ROIProcessor:
         self.counting_line_thickness = int(self.counting_cfg.get('thickness', 3))
         self.counting_extend_factor = float(self.counting_cfg.get('extend_factor', 0.1))
         
-        # Calculate counting line coordinates
         self.counting_line_coords = self._calculate_counting_line()
     
     def switch_roi_type(self, new_type: str):
-        """Switch between signal_region and full_region ROI types"""
         if new_type not in ['signal_region', 'full_region']:
             return
         
@@ -109,65 +100,47 @@ class ROIProcessor:
         if roi_type == 'full_region':
             return np.array(self.full_region_config.get('points', 
                 [[300, 300], [1000, 300], [1200, 800], [100, 800]]), np.int32)
-        else:  # signal_region
-            # Get full_region points
+        else:  
             full_pts = self.full_region_config.get('points', 
                 [[300, 300], [1000, 300], [1200, 800], [100, 800]])
             if len(full_pts) < 4:
                 return np.array(full_pts, np.int32)
-            
-            # Assume points order: [top-left, bottom-left, bottom-right, top-right]
+
             top_left, bottom_left, bottom_right, top_right = full_pts
             
-            # Get y proportion (0 to 1)
             y_prop = self.signal_region_config.get('y', 0.5)
-            y_prop = max(0.0, min(1.0, y_prop))  # Clamp to [0, 1]
-            
-            # Calculate height of full_region
+            y_prop = max(0.0, min(1.0, y_prop))  
+
             top_y = min(top_left[1], top_right[1])
             bottom_y = max(bottom_left[1], bottom_right[1])
             height = bottom_y - top_y
-            
-            # Calculate y-coordinate for top edge of signal_region
             signal_y = int(top_y + y_prop * height)
-            
-            # Interpolate x-coordinates for top points
-            # Left side: between top-left and bottom-left
+        
             t_left = (signal_y - top_left[1]) / (bottom_left[1] - top_left[1]) if bottom_left[1] != top_left[1] else 0
             x_left = int(top_left[0] + t_left * (bottom_left[0] - top_left[0]))
             
-            # Right side: between top-right and bottom-right
             t_right = (signal_y - top_right[1]) / (bottom_right[1] - top_right[1]) if bottom_right[1] != top_right[1] else 0
             x_right = int(top_right[0] + t_right * (bottom_right[0] - top_right[0]))
-            
-            # signal_region points: [top-left, bottom-left, bottom-right, top-right]
             return np.array([[x_left, signal_y], bottom_left, bottom_right, [x_right, signal_y]], np.int32)
     
     def _calculate_counting_line(self) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
         """Calculate HORIZONTAL counting line coordinates for signal_region ROI (trapezoid)"""
         if not self.counting_enabled or self.roi_type != 'signal_region' or len(self.pts_px) < 4:
             return None
-            
-        # Get signal_region points (trapezoid)
+
         pts = self.pts_px
-        # Assume points order: [top-left, bottom-left, bottom-right, top-right]
-        top_y = min(pts[0][1], pts[3][1])  # Top of trapezoid
-        bottom_y = max(pts[1][1], pts[2][1])  # Bottom of trapezoid
+        top_y = min(pts[0][1], pts[3][1])  
+        bottom_y = max(pts[1][1], pts[2][1])  
         height = bottom_y - top_y
         
-        # Calculate line y-position based on counting_line_pos
         line_y = int(top_y + height * self.counting_line_pos)
-        
-        # Interpolate x-coordinates at line_y
-        # Left side: between top-left (0) and bottom-left (1)
+
         t_left = (line_y - pts[0][1]) / (pts[1][1] - pts[0][1]) if pts[1][1] != pts[0][1] else 0
         line_x1 = int(pts[0][0] + t_left * (pts[1][0] - pts[0][0]))
         
-        # Right side: between top-right (3) and bottom-right (2)
         t_right = (line_y - pts[3][1]) / (pts[2][1] - pts[3][1]) if pts[2][1] != pts[3][1] else 0
         line_x2 = int(pts[3][0] + t_right * (pts[2][0] - pts[3][0]))
-        
-        # Extend line beyond bounds
+
         extend_width = int((line_x2 - line_x1) * self.counting_extend_factor)
         line_x1 -= extend_width
         line_x2 += extend_width
@@ -197,13 +170,12 @@ class ROIProcessor:
         if not self.enabled or len(self.pts_px) == 0: 
             return
             
-        # Use different colors based on traffic light state
         if traffic_state == TrafficLightState.RED:
-            overlay_color = (0, 0, 255)  # Red
+            overlay_color = (0, 0, 255)  
         elif traffic_state == TrafficLightState.GREEN:
-            overlay_color = (0, 255, 0)  # Green
+            overlay_color = (0, 255, 0)  
         else:
-            overlay_color = self.color  # Default color
+            overlay_color = self.color 
             
         overlay_alpha = float(self.overlay_cfg.get('alpha', 0.2))
         background_alpha = float(self.overlay_cfg.get('background_alpha', 0.8))
@@ -213,8 +185,7 @@ class ROIProcessor:
         cv2.addWeighted(overlay, overlay_alpha, frame, background_alpha, 0, frame)
   
         cv2.polylines(frame, [self.pts_px], True, overlay_color, self.thickness)
-        
-        # Draw corner points with config
+
         corner_cfg = self.overlay_cfg.get('corners', {})
         corner_radius = int(corner_cfg.get('radius', 5))
         corner_color = tuple(corner_cfg.get('color', [0, 0, 255]))
@@ -224,8 +195,7 @@ class ROIProcessor:
         for i, pt in enumerate(self.pts_px):
             cv2.circle(frame, tuple(pt), corner_radius, corner_color, -1)
             cv2.circle(frame, tuple(pt), corner_radius + 2, corner_border_color, corner_border_thickness)
-            
-        # Draw ROI label with traffic light state
+
         label_cfg = self.overlay_cfg.get('roi_label', {})
         font = getattr(cv2, label_cfg.get('font', 'FONT_HERSHEY_SIMPLEX'))
         font_scale = float(label_cfg.get('scale', 0.7))
@@ -239,52 +209,46 @@ class ROIProcessor:
         cv2.putText(frame, roi_label, 
                    (self.pts_px[0][0], self.pts_px[0][1] - label_offset_y), 
                    font, font_scale, overlay_color, font_thickness)
-        
-        # Draw additional full_region when in RED and main is signal_region
         if traffic_state == TrafficLightState.RED and self.roi_type == 'signal_region':
-            extra_color = (255, 0, 0)  # Blue for extra
+            extra_color = (255, 0, 0)  
             extra_pts = self._get_roi_points_for_type('full_region')
             if len(extra_pts) > 0:
                 cv2.fillPoly(overlay, [extra_pts], extra_color)
                 cv2.addWeighted(overlay, overlay_alpha, frame, background_alpha, 0, frame)
                 cv2.polylines(frame, [extra_pts], True, extra_color, self.thickness)
-                # Draw corners for extra
+
                 for pt in extra_pts:
                     cv2.circle(frame, tuple(pt), corner_radius, corner_color, -1)
                     cv2.circle(frame, tuple(pt), corner_radius + 2, corner_border_color, corner_border_thickness)
-                # Extra label
+
                 extra_label = "Extra ROI: Full Detection"
                 cv2.putText(frame, extra_label, 
                             (extra_pts[0][0], extra_pts[0][1] - label_offset_y), 
                             font, font_scale, extra_color, font_thickness)
-    
-        # Draw counting line if enabled
+
         if self.counting_enabled and self.counting_line_coords:
             pt1, pt2 = self.counting_line_coords
             cv2.line(frame, pt1, pt2, self.counting_line_color, self.counting_line_thickness)
     
     def count_objects_by_line(self, detections: List) -> CountingStats:
-        """Count objects ABOVE and BELOW the horizontal counting line"""
         stats = CountingStats()
         
         if not self.counting_enabled or not self.counting_line_coords:
             return stats
             
-        line_y = self.counting_line_coords[0][1]  # Y coordinate of horizontal line
+        line_y = self.counting_line_coords[0][1] 
         
         for x, y, w, h, conf, class_id in detections:
-            # Use center point of detection box
             center_y = y + h // 2
             
             if center_y < line_y:
-                stats.before_line += 1  # Above the line
+                stats.before_line += 1 
             else:
-                stats.after_line += 1   # Below the line
+                stats.after_line += 1   
                 
         return stats
     
     def count_all_objects(self, detections: List) -> int:
-        """Count all objects in ROI (used for full_region)"""
         return len(detections)
     
     def point_in_roi(self, point: Tuple[int, int]) -> bool:
@@ -351,12 +315,10 @@ class Visualizer:
         self.max_h = int(display_cfg.get('max_height', 720))
         self.window_name = display_cfg.get('window_name', 'Traffic Monitor')
         
-        # Detection box styling from config
         self.box_cfg = display_cfg.get('detection_box', {})
         self.box_color = tuple(self.box_cfg.get('color', [0, 255, 0]))
         self.box_thickness = int(self.box_cfg.get('thickness', 4))
-        
-        # Label styling from config
+
         self.label_cfg = display_cfg.get('label', {})
         self.label_font = getattr(cv2, self.label_cfg.get('font', 'FONT_HERSHEY_SIMPLEX'))
         self.label_scale = float(self.label_cfg.get('scale', 1.0))
@@ -379,8 +341,7 @@ class Visualizer:
             self.stats_color = tuple(stats_cfg.get('color', [255, 255, 255]))
             self.stats_thickness = int(stats_cfg.get('thickness', 2))
             self.stats_line_spacing = int(stats_cfg.get('line_spacing', 35))
-            
-            # Background config
+
             bg_cfg = stats_cfg.get('background', {})
             self.stats_bg_enabled = bg_cfg.get('enabled', True)
             self.stats_bg_color = tuple(bg_cfg.get('color', [0, 0, 0]))
@@ -401,49 +362,36 @@ class Visualizer:
     
     def draw_counting_stats(self, frame: np.ndarray, stats: CountingStats, 
                            traffic_state: TrafficMonitorState = None) -> None:
-        """Draw counting statistics on frame with traffic light state"""
         if not self.display_stats or not self.counting_enabled:
             return
-            
-        # Prepare text lines
-        texts = [
-            f"Before Line: {stats.before_line}",
-            f"After Line: {stats.after_line}",
-            f"Total: {stats.before_line + stats.after_line}"
-        ]
-        
-        # Add traffic light state info
+
+        texts = [f"Before Line: {stats.before_line}", f"After Line: {stats.after_line}", f"Total: {stats.before_line + stats.after_line}"]
+
         if traffic_state:
             texts.append(f"Traffic Light: {traffic_state.current_light.value}")
             texts.append(f"Bound: {traffic_state.bound}")
             if traffic_state.full_region_count > 0:
                 texts.append(f"Full Region Counts: {traffic_state.full_region_count}/5")
             
-        # Calculate background rectangle if enabled
         if self.stats_bg_enabled:
-            # Calculate text dimensions
             text_sizes = [cv2.getTextSize(text, self.stats_font, self.stats_scale, self.stats_thickness)[0] 
                          for text in texts]
             max_width = max(size[0] for size in text_sizes)
             total_height = len(texts) * self.stats_line_spacing
-            
-            # Draw background
+
             bg_x1 = self.stats_x - self.stats_bg_padding
             bg_y1 = self.stats_y - self.stats_bg_padding - text_sizes[0][1]
             bg_x2 = self.stats_x + max_width + self.stats_bg_padding
             bg_y2 = self.stats_y + total_height - self.stats_line_spacing + self.stats_bg_padding
-            
-            # Create overlay for semi-transparent background
+
             overlay = frame.copy()
             cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), self.stats_bg_color, -1)
             cv2.addWeighted(overlay, self.stats_bg_alpha, frame, 1 - self.stats_bg_alpha, 0, frame)
         
-        # Draw text lines
         for i, text in enumerate(texts):
             y_pos = self.stats_y + i * self.stats_line_spacing
-            # Use different color for traffic light status
             color = self.stats_color
-            if i == 3 and traffic_state:  # Traffic light state line
+            if i == 3 and traffic_state: 
                 if traffic_state.current_light == TrafficLightState.RED:
                     color = (0, 0, 255)
                 elif traffic_state.current_light == TrafficLightState.GREEN:
@@ -457,7 +405,7 @@ class Visualizer:
             return False
         
         cv2.imshow(self.window_name, frame)
-        return cv2.waitKey(1) == 27  # Return True if ESC is pressed
+        return cv2.waitKey(1) == 27  
 
 @contextmanager
 def video_capture_context(source):
@@ -493,29 +441,21 @@ def load_caffe_model(args, cfg: Dict[str, Any]):
 def process_traffic_light_logic(traffic_state: TrafficMonitorState, 
                                counting_stats: CountingStats,
                                roi_processor: ROIProcessor) -> None:
-    """Process traffic light detection logic"""
-    
     current_time = time.time()
     
     traffic_state.frame_buffer.append(counting_stats)
-    
-    # Check if it's time for detection (every 2 seconds)
     if current_time - traffic_state.last_detection_time < traffic_state.detection_interval:
         return
-    
-    # Time for detection - reset timer
     traffic_state.last_detection_time = current_time
-    
-    # Calculate average from buffer
+
     if len(traffic_state.frame_buffer) > 0:
         avg_before = sum(s.before_line for s in traffic_state.frame_buffer) / len(traffic_state.frame_buffer)
         avg_after = sum(s.after_line for s in traffic_state.frame_buffer) / len(traffic_state.frame_buffer)
         difference = avg_before - avg_after
         
         if traffic_state.current_light == TrafficLightState.RED:
-            # Check if should turn GREEN
             if difference < traffic_state.bound:
-                print(f"\n🟢 Traffic Light: RED -> GREEN (Difference: {difference:.1f} < {traffic_state.bound})")
+                print(f"\nTraffic Light: RED -> GREEN (Difference: {difference:.1f} < {traffic_state.bound})")
                 traffic_state.current_light = TrafficLightState.GREEN
                 roi_processor.switch_roi_type('full_region')
                 traffic_state.full_region_count = 0
@@ -523,14 +463,12 @@ def process_traffic_light_logic(traffic_state: TrafficMonitorState,
         
         elif traffic_state.current_light == TrafficLightState.GREEN:
             if roi_processor.roi_type == 'full_region':
-                # Skip GREEN to RED check during counting phase
                 return
-            
-            # Check if should turn RED
+
             if difference > traffic_state.bound:
                 traffic_state.consecutive_red_detections += 1
                 if traffic_state.consecutive_red_detections > 5:
-                    print(f"\n🔴 Traffic Light: GREEN -> RED (Difference: {difference:.1f} > {traffic_state.bound}) after {traffic_state.consecutive_red_detections} detections")
+                    print(f"\nTraffic Light: GREEN -> RED (Difference: {difference:.1f} > {traffic_state.bound}) after {traffic_state.consecutive_red_detections} detections")
                     traffic_state.current_light = TrafficLightState.RED
                     roi_processor.switch_roi_type('signal_region')
                     traffic_state.consecutive_red_detections = 0
@@ -543,10 +481,8 @@ def main():
     
     try:
         cfg = load_runtime_config(args)
-
         setup_cpu_affinity(args.core)
         
-        # Load model config
         model_cfg_dict = cfg.get('model', {})
         model_cfg = ModelConfig(
             input_width=int(model_cfg_dict.get('input_width', 300)),
@@ -558,7 +494,6 @@ def main():
             classes=model_cfg_dict.get('classes', [])
         )
         
-        # Initialize traffic monitoring state
         traffic_cfg = cfg.get('processing', {}).get('traffic_light', {})
         traffic_state = TrafficMonitorState(
             bound=int(traffic_cfg.get('bound', 5)),
@@ -570,30 +505,21 @@ def main():
         detection_processor = DetectionProcessor(cfg, model_cfg)
         visualizer = Visualizer(cfg, args.show)
         
-        # Load Caffe model
         model = load_caffe_model(args, cfg)
-        
         state = ProcessingState(start_time=time.time())
-        
-        # Get processing config
+
         proc_cfg = cfg.get('processing', {})
         progress_interval = int(proc_cfg.get('progress_update_interval', 10))
         ema_alpha = float(proc_cfg.get('ema_alpha', 0.2))
         min_loop_time = float(proc_cfg.get('min_loop_time', 1e-6))
-        
-        # Get video config
+
         video_cfg = cfg.get('video', {})
         default_fps_fallback = float(video_cfg.get('default_fps_fallback', 30.0))
         
-        # Main processing loop
         with video_capture_context(args.source) as cap:
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if not str(args.source).isdigit() else -1
             original_fps = cap.get(cv2.CAP_PROP_FPS) or default_fps_fallback
-            last_process_time = time.time() - traffic_state.detection_interval  # Start immediately
-            
-            print(f"Video: {total_frames if total_frames >= 0 else 'unknown'} frames @ {original_fps:.1f} FPS")
-            print(f"Processing every {traffic_state.detection_interval}s")
-            print(f"Traffic Light Detection - Bound: {traffic_state.bound}, Interval: {traffic_state.detection_interval}s")
+            last_process_time = time.time() - traffic_state.detection_interval  
             
             frame_idx = -1
             while True:
@@ -605,30 +531,26 @@ def main():
                     print("\nEnd of video")
                     break
                 
-                # Skip frames until 2 seconds have passed
                 current_time = time.time()
                 if current_time - last_process_time < traffic_state.detection_interval:
-                    if str(args.source).isdigit():  # Camera: always use latest frame at detection time
+                    if str(args.source).isdigit():  
                         continue
-                    else:  # Video: skip frame
+                    else:  
                         continue
                 
                 state.frame_count += 1
                 last_process_time = current_time
-                
-                # ROI processing
+
                 roi_frame, roi_bbox = roi_processor.apply_roi(frame)
                 roi_processor.draw_overlay(frame, traffic_state.current_light)
-                
-                # Prepare Caffe model input
+
                 if roi_processor.roi_type == 'full_region':
                     input_size = (roi_frame.shape[1], roi_frame.shape[0])
                     resized_roi = roi_frame.copy()
                 else:
                     input_size = (model_cfg.input_width, model_cfg.input_height)
                     resized_roi = cv2.resize(roi_frame, input_size)
-                
-                # Caffe inference
+
                 inference_start = time.time()
                 
                 blob = cv2.dnn.blobFromImage(
@@ -644,40 +566,25 @@ def main():
                 
                 inference_time = time.time() - inference_start
                 state.total_inference_time += inference_time
-                
-                # Process detections
+
                 detections = detection_processor.process(pred, roi_bbox, frame.shape[:2])
-                
-                # Filter by ROI
                 filtered_dets = [d for d in detections 
                                 if roi_processor.point_in_roi((d[0] + d[2]//2, d[1] + d[3]//2))]
-                
-                # Count objects
                 if roi_processor.roi_type == 'signal_region':
                     counting_stats = roi_processor.count_objects_by_line(filtered_dets)
-                else:  # full_region
-                    # For full_region, count all objects
+                else:  
                     total_count = roi_processor.count_all_objects(filtered_dets)
                     counting_stats = CountingStats(before_line=total_count, after_line=0)
-                    print(f"\n📊 Full Detection ROI - Total vehicles: {total_count}")
+                    print(f"\nFull Detection ROI - Total vehicles: {total_count}")
                     traffic_state.full_region_count += 1
                     if traffic_state.full_region_count >= 5:
                         roi_processor.switch_roi_type('signal_region')
                         traffic_state.full_region_count = 0
-                
-                # Process traffic light logic
                 process_traffic_light_logic(traffic_state, counting_stats, roi_processor)
-                
-                # Draw detections
                 visualizer.draw_detections(frame, filtered_dets, model_cfg.classes)
-                
-                # Draw counting statistics with traffic state
                 visualizer.draw_counting_stats(frame, counting_stats, traffic_state)
-                
-                # Calculate metrics
                 current_fps = 1.0 / max(current_time - loop_start, min_loop_time)
-                
-                # Update EMA
+
                 if state.ema_fps is None:
                     state.ema_fps = current_fps
                     state.ema_inf = inference_time * 1000
@@ -689,10 +596,9 @@ def main():
                     print("\nStopped by user (ESC)")
                     break
 
-                # Progress update
                 if state.frame_count % progress_interval == 0:
                     progress = print_progress_bar(state.frame_count, total_frames) if total_frames >= 0 else f"Frame {state.frame_count}"
-                    status_emoji = "🔴" if traffic_state.current_light == TrafficLightState.RED else "🟢"
+                    status_emoji = "RED" if traffic_state.current_light == TrafficLightState.RED else "GREEN"
                     print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)} | Before:{counting_stats.before_line} | After:{counting_stats.after_line} | Light:{status_emoji}", 
                           end="", flush=True)
         
