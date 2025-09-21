@@ -17,7 +17,6 @@ from traffic_monitor.config import build_arg_parser, load_runtime_config
 class TrafficLightState(Enum):
     RED = "RED"
     GREEN = "GREEN"
-    TRANSITION = "TRANSITION"
 
 @dataclass
 class ProcessingState:
@@ -66,13 +65,14 @@ class ROIProcessor:
         self.enabled = self.roi_cfg.get('enabled', False)
         self.roi_type = self.roi_cfg.get('type', 'rectangle')
         self.original_roi_type = self.roi_type  # Store original type
-        self.pts_px = self._get_roi_points()
-        self.color = tuple(self.roi_cfg.get('color', [0, 255, 0]))
-        self.thickness = int(self.roi_cfg.get('thickness', 2))
         
         # Store both ROI configurations
         self.rect_config = self.roi_cfg.get('rectangle', {})
         self.trapezoid_config = self.roi_cfg.get('trapezoid', {})
+        
+        self.pts_px = self._get_roi_points()
+        self.color = tuple(self.roi_cfg.get('color', [0, 255, 0]))
+        self.thickness = int(self.roi_cfg.get('thickness', 2))
         
         # Load overlay config
         self.overlay_cfg = cfg.get('processing', {}).get('display', {}).get('overlay', {})
@@ -414,8 +414,6 @@ def load_caffe_model(args, cfg: Dict[str, Any]):
     model = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
     
     backend_cfg = cfg.get('model', {}).get('backend', {})
-    backend_name = backend_cfg.get('name', 'opencv').lower()
-    target_name = backend_cfg.get('target', 'cpu').lower()
     use_opencl = backend_cfg.get('use_opencl', True)
     
     backend = cv2.dnn.DNN_BACKEND_OPENCV
@@ -463,15 +461,9 @@ def process_traffic_light_logic(traffic_state: TrafficMonitorState,
                 roi_processor.switch_roi_type('trapezoid')
                 
         elif traffic_state.current_light == TrafficLightState.RED:
-            # In trapezoid mode - count once
-            if not traffic_state.transition_counted:
-                # Count all objects in trapezoid (this will be done in main loop)
-                traffic_state.current_light = TrafficLightState.TRANSITION
-                traffic_state.transition_counted = True
-                
-            # Check if should turn GREEN (using before line count as proxy for congestion)
-            elif avg_before < traffic_state.bound:
-                print(f"\n🟢 Traffic Light: RED -> GREEN (Before line: {avg_before:.1f} < {traffic_state.bound})")
+            # Check if should turn GREEN
+            if difference < traffic_state.bound:
+                print(f"\n🟢 Traffic Light: RED -> GREEN (Difference: {difference:.1f} < {traffic_state.bound})")
                 traffic_state.current_light = TrafficLightState.GREEN
                 # Switch back to rectangle
                 roi_processor.switch_roi_type('rectangle')
@@ -504,7 +496,7 @@ def main():
         # Initialize traffic monitoring state
         traffic_cfg = cfg.get('processing', {}).get('traffic_light', {})
         traffic_state = TrafficMonitorState(
-            bound=int(traffic_cfg.get('bound', 5)),
+            bound=int(traffic_cfg.get('bound', 10)),
             detection_interval=float(traffic_cfg.get('detection_interval', 2.0))
         )
         
@@ -533,10 +525,6 @@ def main():
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             original_fps = cap.get(cv2.CAP_PROP_FPS) or default_fps_fallback
             frame_interval = 1.0 / args.fps if frame_interval_sleep else 0
-            
-            print(f"Video: {total_frames} frames @ {original_fps:.1f} FPS")
-            print(f"Processing at: {args.fps} FPS")
-            print(f"Traffic Light Detection - Bound: {traffic_state.bound}, Interval: {traffic_state.detection_interval}s")
             
             while True:
                 loop_start = time.time()
@@ -587,14 +575,12 @@ def main():
                     total_count = roi_processor.count_all_objects(filtered_dets)
                     counting_stats = CountingStats(before_line=total_count, after_line=0)
                     
-                    # Print trapezoid count once during transition
-                    if traffic_state.current_light == TrafficLightState.TRANSITION and not traffic_state.transition_counted:
+                    # Print trapezoid count once
+                    if traffic_state.current_light == TrafficLightState.RED and not traffic_state.transition_counted:
                         print(f"\n📊 Trapezoid ROI - Total vehicles: {total_count}")
                         traffic_state.transition_counted = True
                         # Switch back to rectangle after counting
                         roi_processor.switch_roi_type('rectangle')
-                        # Stay in RED state for next cycle
-                        traffic_state.current_light = TrafficLightState.RED
                 
                 # Process traffic light logic
                 process_traffic_light_logic(traffic_state, counting_stats, roi_processor)

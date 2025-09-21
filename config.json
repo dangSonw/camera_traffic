@@ -41,7 +41,7 @@
   "processing": {
     "traffic_light": {
       "enabled": true,
-      "bound": 5,
+      "bound": 10,
       "detection_interval": 2.0,
       "buffer_size": 5
     },
@@ -51,8 +51,8 @@
       "nms_threshold": 0.4
     },
     "display": {
-      "max_width": 2000,
-      "max_height": 1500,
+      "max_width": 1500,
+      "max_height": 1000,
       "window_name": "Traffic Monitor",
       "detection_box": {
         "color": [0, 255, 0],
