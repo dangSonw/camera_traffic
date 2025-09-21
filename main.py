@@ -22,19 +22,13 @@ class ProcessingState:
 
 @dataclass 
 class ModelConfig:
-    input_width: int = 300
-    input_height: int = 300
-    scale_factor: float = 0.00784313725490196
-    mean_values: List[float] = None
-    swap_rb: bool = False
-    crop: bool = False
-    classes: List[str] = None
-    
-    def __post_init__(self):
-        if self.mean_values is None:
-            self.mean_values = [127.5, 127.5, 127.5]
-        if self.classes is None:
-            self.classes = []
+    input_width: int
+    input_height: int
+    scale_factor: float
+    mean_values: List[float]
+    swap_rb: bool
+    crop: bool
+    classes: List[str]
 
 class ROIProcessor:
     def __init__(self, cfg: Dict[str, Any]):
@@ -45,6 +39,9 @@ class ROIProcessor:
         self.pts_px = self._get_roi_points()
         self.color = tuple(self.roi_cfg.get('color', [0, 255, 0]))
         self.thickness = int(self.roi_cfg.get('thickness', 2))
+        
+        # Load overlay config
+        self.overlay_cfg = cfg.get('display', {}).get('overlay', {})
         
     def _get_roi_points(self) -> np.ndarray:
         if not self.enabled:
@@ -81,19 +78,40 @@ class ROIProcessor:
         return cropped, (x_min, y_min, x_max - x_min, y_max - y_min)
     
     def draw_overlay(self, frame: np.ndarray) -> None:
-        if not self.enabled or len(self.pts_px) == 0: return
+        if not self.enabled or len(self.pts_px) == 0: 
+            return
+            
+        # Use config values instead of hardcoded
+        overlay_alpha = float(self.overlay_cfg.get('alpha', 0.2))
+        background_alpha = float(self.overlay_cfg.get('background_alpha', 0.8))
+        
         overlay = frame.copy()
         cv2.fillPoly(overlay, [self.pts_px], self.color)
-        cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
+        cv2.addWeighted(overlay, overlay_alpha, frame, background_alpha, 0, frame)
   
         cv2.polylines(frame, [self.pts_px], True, self.color, self.thickness)
         
+        # Draw corner points with config
+        corner_cfg = self.overlay_cfg.get('corners', {})
+        corner_radius = int(corner_cfg.get('radius', 5))
+        corner_color = tuple(corner_cfg.get('color', [0, 0, 255]))
+        corner_border_color = tuple(corner_cfg.get('border_color', [255, 255, 255]))
+        corner_border_thickness = int(corner_cfg.get('border_thickness', 1))
+        
         for i, pt in enumerate(self.pts_px):
-            cv2.circle(frame, tuple(pt), 5, (0, 0, 255), -1)
-            cv2.circle(frame, tuple(pt), 7, (255, 255, 255), 1)
+            cv2.circle(frame, tuple(pt), corner_radius, corner_color, -1)
+            cv2.circle(frame, tuple(pt), corner_radius + 2, corner_border_color, corner_border_thickness)
+            
+        # Draw ROI label with config
+        label_cfg = self.overlay_cfg.get('roi_label', {})
+        font = getattr(cv2, label_cfg.get('font', 'FONT_HERSHEY_SIMPLEX'))
+        font_scale = float(label_cfg.get('scale', 0.7))
+        font_thickness = int(label_cfg.get('thickness', 2))
+        label_offset_y = int(label_cfg.get('offset_y', 10))
+        
         cv2.putText(frame, f"ROI: {self.roi_type.upper()}", 
-                   (self.pts_px[0][0], self.pts_px[0][1] - 10), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, self.color, 2)
+                   (self.pts_px[0][0], self.pts_px[0][1] - label_offset_y), 
+                   font, font_scale, self.color, font_thickness)
     
     def point_in_roi(self, point: Tuple[int, int]) -> bool:
         if not self.enabled or len(self.pts_px) == 0:
@@ -152,29 +170,44 @@ class DetectionProcessor:
                  confidences[i], class_ids[i]) for i in indices]
 
 class Visualizer:
-    def __init__(self, show: bool, max_width: int = 1280, max_height: int = 720):
+    def __init__(self, cfg: Dict[str, Any], show: bool):
+        display_cfg = cfg.get('display', {})
         self.show = show
-        self.max_w = max_width
-        self.max_h = max_height
+        self.max_w = int(display_cfg.get('max_width', 1280))
+        self.max_h = int(display_cfg.get('max_height', 720))
+        self.window_name = display_cfg.get('window_name', 'Traffic Monitor')
+        
+        # Detection box styling from config
+        self.box_cfg = display_cfg.get('detection_box', {})
+        self.box_color = tuple(self.box_cfg.get('color', [0, 255, 0]))
+        self.box_thickness = int(self.box_cfg.get('thickness', 4))
+        
+        # Label styling from config
+        self.label_cfg = display_cfg.get('label', {})
+        self.label_font = getattr(cv2, self.label_cfg.get('font', 'FONT_HERSHEY_SIMPLEX'))
+        self.label_scale = float(self.label_cfg.get('scale', 1.0))
+        self.label_color = tuple(self.label_cfg.get('color', [0, 199, 200]))
+        self.label_thickness = int(self.label_cfg.get('thickness', 2))
+        self.label_offset_x = int(self.label_cfg.get('offset_x', 2))
+        self.label_offset_y = int(self.label_cfg.get('offset_y', 5))
         
         if show:
-            cv2.namedWindow('Traffic Monitor', cv2.WINDOW_NORMAL)
-            cv2.resizeWindow('Traffic Monitor', self.max_w, self.max_h)
+            cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.window_name, self.max_w, self.max_h)
     
-    @staticmethod
-    def draw_detections(frame: np.ndarray, detections: List, classes: List[str]) -> None:
+    def draw_detections(self, frame: np.ndarray, detections: List, classes: List[str]) -> None:
         for x, y, w, h, conf, class_id in detections:
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 4)      
+            cv2.rectangle(frame, (x, y), (x + w, y + h), self.box_color, self.box_thickness)      
             if class_id < len(classes):
                 label = f"{classes[class_id]}:{conf:.2f}"
-                cv2.putText(frame, label, (x + 2, y - 5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 199, 200), 2)
+                cv2.putText(frame, label, (x + self.label_offset_x, y - self.label_offset_y),
+                           self.label_font, self.label_scale, self.label_color, self.label_thickness)
     
     def display(self, frame: np.ndarray):
         if not self.show:
             return False
         
-        cv2.imshow('Traffic Monitor', frame)
+        cv2.imshow(self.window_name, frame)
         cv2.waitKey(1) 
 
 @contextmanager
@@ -187,12 +220,21 @@ def video_capture_context(source):
     finally:
         cap.release()
 
-def load_caffe_model(args):
+def load_caffe_model(args, cfg: Dict[str, Any]):
     model = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
+    
+    # Get backend and target from config instead of hardcoded
+    backend_cfg = cfg.get('model', {}).get('backend', {})
+    backend_name = backend_cfg.get('name', 'opencv').lower()
+    target_name = backend_cfg.get('target', 'cpu').lower()
+    use_opencl = backend_cfg.get('use_opencl', True)
+    
+    # Default to OpenCV backend and CPU target
     backend = cv2.dnn.DNN_BACKEND_OPENCV
     target = cv2.dnn.DNN_TARGET_CPU
 
-    if os.environ.get('OPENCV_DNN_OPENCL', '0') == '1':
+    # Use OpenCL if available and enabled in config
+    if use_opencl and os.environ.get('OPENCV_DNN_OPENCL', '0') == '1':
         cv2.ocl.setUseOpenCL(True)
         if cv2.ocl.haveOpenCL():
             target = cv2.dnn.DNN_TARGET_OPENCL
@@ -211,6 +253,7 @@ def main():
 
         cfg = load_runtime_config(args)
         
+        # Load model config from config file instead of hardcoded defaults
         model_cfg_dict = cfg.get('model', {})
         model_cfg = ModelConfig(
             input_width=int(model_cfg_dict.get('input_width', 300)),
@@ -224,18 +267,29 @@ def main():
         
         roi_processor = ROIProcessor(cfg)
         detection_processor = DetectionProcessor(cfg, model_cfg)
-        visualizer = Visualizer(args.show, cfg.get('display', {}).get('max_width', 1280), cfg.get('display', {}).get('max_height', 720))
+        visualizer = Visualizer(cfg, args.show)
         
-        # Load Caffe model
-        model = load_caffe_model(args)
+        # Load Caffe model with config
+        model = load_caffe_model(args, cfg)
         
         state = ProcessingState(start_time=time.time())
+        
+        # Get processing config instead of hardcoded values
+        proc_cfg = cfg.get('processing', {})
+        progress_interval = int(proc_cfg.get('progress_update_interval', 10))
+        ema_alpha = float(proc_cfg.get('ema_alpha', 0.2))
+        min_loop_time = float(proc_cfg.get('min_loop_time', 1e-6))
+        frame_interval_sleep = bool(proc_cfg.get('frame_interval_sleep', True))
+        
+        # Get video config
+        video_cfg = cfg.get('video', {})
+        default_fps_fallback = float(video_cfg.get('default_fps_fallback', 30.0))
         
         # Main processing loop
         with video_capture_context(args.source) as cap:
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            original_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            frame_interval = 1.0 / args.fps
+            original_fps = cap.get(cv2.CAP_PROP_FPS) or default_fps_fallback
+            frame_interval = 1.0 / args.fps if frame_interval_sleep else 0
             
             print(f"Video: {total_frames} frames @ {original_fps:.1f} FPS")
             print(f"Processing at: {args.fps} FPS")
@@ -253,7 +307,7 @@ def main():
                 roi_frame, roi_bbox = roi_processor.apply_roi(frame)
                 roi_processor.draw_overlay(frame)
                 
-                # Prepare Caffe model input
+                # Prepare Caffe model input with config values
                 input_size = (model_cfg.input_width, model_cfg.input_height)
                 resized_roi = cv2.resize(roi_frame, input_size)
                 
@@ -282,30 +336,32 @@ def main():
                                 if roi_processor.point_in_roi((d[0] + d[2]//2, d[1] + d[3]//2))]
                 
                 # Draw detections
-                Visualizer.draw_detections(frame, filtered_dets, model_cfg.classes)
+                visualizer.draw_detections(frame, filtered_dets, model_cfg.classes)
                 
-                # Calculate metrics
-                current_fps = 1.0 / max(time.time() - loop_start, 1e-6)
+                # Calculate metrics with config values
+                current_fps = 1.0 / max(time.time() - loop_start, min_loop_time)
                 
-                # Update EMA (Exponential Moving Average)
+                # Update EMA with config alpha
                 if state.ema_fps is None:
                     state.ema_fps = current_fps
                     state.ema_inf = inference_time * 1000
                 else:
-                    alpha = 0.2
-                    state.ema_fps = (1 - alpha) * state.ema_fps + alpha * current_fps
-                    state.ema_inf = (1 - alpha) * state.ema_inf + alpha * (inference_time * 1000)
+                    state.ema_fps = (1 - ema_alpha) * state.ema_fps + ema_alpha * current_fps
+                    state.ema_inf = (1 - ema_alpha) * state.ema_inf + ema_alpha * (inference_time * 1000)
                 
                 if visualizer.display(frame): break
 
-                if state.frame_count % 10 == 0:
+                # Use config for progress update interval
+                if state.frame_count % progress_interval == 0:
                     progress = print_progress_bar(state.frame_count, total_frames)
                     print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)}", 
                           end="", flush=True)
 
-                elapsed = time.time() - loop_start
-                if elapsed < frame_interval:
-                    time.sleep(frame_interval - elapsed)
+                # Frame rate control with config
+                if frame_interval_sleep and frame_interval > 0:
+                    elapsed = time.time() - loop_start
+                    if elapsed < frame_interval:
+                        time.sleep(frame_interval - elapsed)
         
     except KeyboardInterrupt:
         print("\nInterrupted by user (Ctrl+C)")

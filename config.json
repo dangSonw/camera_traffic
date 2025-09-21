@@ -1,7 +1,7 @@
 {
   "model": {
-    "input_width": 1420,
-    "input_height": 1080,
+    "input_width": 300,
+    "input_height": 300,
     "roi": {
       "enabled": true,
       "type": "rectangle",
@@ -20,40 +20,70 @@
         ]
       },
       "color": [0, 255, 0],
-      "thickness": 10
+      "thickness": 2
     },
     "scale_factor": 0.00784313725490196,
     "mean_values": [127.5, 127.5, 127.5],
     "swap_rb": false,
     "crop": false,
-    "classes": ["background", "aeroplane", "bicycle", "bird", "boat",
-                "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
-                "dog", "horse", "motorbike", "person", "pottedplant",
-                "sheep", "sofa", "train", "tvmonitor"]
+    "classes": [
+      "background", "aeroplane", "bicycle", "bird", "boat",
+      "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
+      "dog", "horse", "motorbike", "person", "pottedplant",
+      "sheep", "sofa", "train", "tvmonitor"
+    ],
+    "backend": {
+      "name": "opencv",
+      "target": "cpu",
+      "use_opencl": true
+    }
   },
   "detection": {
     "conf_thresh": 0.50,
-    "allowed_classes": ["car", "bus", "motorbike", "person", "bicycle", "truck"],
+    "allowed_classes": ["car", "bus", "motorbike", "person", "bicycle"],
     "nms_threshold": 0.4
   },
   "display": {
-    "purple_ratio": 0.50,
-    "blue_ratio": 0.875,
-    "line_margin_factor": 0.015,
-    "min_delta_factor": 0.005,
-    "box_thickness": 10,
-    "line_thickness": 10,
-    "text_scale": 0.8,
-    "text_thickness": 2,
-    "trail_max_len": 10,
     "max_width": 1280,
-    "max_height": 720
+    "max_height": 720,
+    "window_name": "Traffic Monitor",
+    "detection_box": {
+      "color": [0, 255, 0],
+      "thickness": 4
+    },
+    "label": {
+      "font": "FONT_HERSHEY_SIMPLEX",
+      "scale": 1.0,
+      "color": [0, 199, 200],
+      "thickness": 2,
+      "offset_x": 2,
+      "offset_y": 5
+    },
+    "overlay": {
+      "alpha": 0.2,
+      "background_alpha": 0.8,
+      "corners": {
+        "radius": 5,
+        "color": [0, 0, 255],
+        "border_color": [255, 255, 255],
+        "border_thickness": 1
+      },
+      "roi_label": {
+        "font": "FONT_HERSHEY_SIMPLEX",
+        "scale": 0.7,
+        "thickness": 2,
+        "offset_y": 10
+      }
+    }
   },
-  "tracking": {
-    "density_window": 10
+  "processing": {
+    "default_fps": 30.0,
+    "frame_interval_sleep": true,
+    "progress_update_interval": 10,
+    "ema_alpha": 0.2,
+    "min_loop_time": 1e-6
   },
-  "performance": {
-    "sample_interval_sec": 0.5,
-    "target_fps": 12.0
+  "video": {
+    "default_fps_fallback": 30.0
   }
 }
