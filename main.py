@@ -8,12 +8,17 @@ import threading
 import os
 from dataclasses import dataclass
 from contextlib import contextmanager
+import logging
 
 # Import modules
 from traffic_monitor.system_utils import (
     start_quit_listener, setup_cpu_affinity, print_progress_bar,
 )
 from traffic_monitor.config import build_arg_parser, load_runtime_config
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ProcessingState:
@@ -209,12 +214,16 @@ class Visualizer:
                 cv2.putText(frame, label, (x + 2, y - 5),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
     
-    def display(self, frame: np.ndarray) -> bool:
-        """Display frame, return True if quit"""
+    def display(self, frame: np.ndarray, stop_event: threading.Event) -> bool:
+        """Display frame, check for quit via stop_event (no local q key handling)"""
         if not self.show:
             return False
+        
         cv2.imshow('Traffic Monitor', frame)
-        return cv2.waitKey(1) & 0xFF == ord('q')
+        cv2.waitKey(1)  # Just process GUI events, don't check for 'q' here
+        
+        # Return True if stop_event is set (by quit_listener thread)
+        return stop_event.is_set()
 
 @contextmanager
 def video_capture_context(source):
@@ -249,8 +258,11 @@ def main():
     args = parser.parse_args()
     
     try:
-        # Setup
+        # Setup CPU affinity
         used_cores = setup_cpu_affinity(args.core)
+        logger.info(f"Using CPU cores: {used_cores}")
+        
+        # Load configuration
         cfg = load_runtime_config(args)
         
         # Initialize components
@@ -276,10 +288,14 @@ def main():
         
         state = ProcessingState(start_time=time.time())
         
+        # Start quit listener thread for 'q' key detection
         stop_event = threading.Event()
         quit_thread = start_quit_listener(stop_event)
+        logger.info(f"Quit listener thread started: {quit_thread.name}")
         
         print("=== STARTING VIDEO PROCESSING ===")
+        print("Press 'q' to quit at any time...")
+        print(f"Running on {len(used_cores)} CPU core(s): {used_cores}")
         
         # Main processing loop
         with video_capture_context(args.source) as cap:
@@ -346,14 +362,15 @@ def main():
                     state.ema_fps = (1 - alpha) * state.ema_fps + alpha * current_fps
                     state.ema_inf = (1 - alpha) * state.ema_inf + alpha * (inference_time * 1000)
                 
-                
-                if visualizer.display(frame):
-                    stop_event.set()
+                # Display and check for quit (uses stop_event from quit_listener)
+                if visualizer.display(frame, stop_event):
+                    logger.info("User requested quit")
+                    break
                 
                 # Print progress
                 if state.frame_count % 10 == 0:
                     progress = print_progress_bar(state.frame_count, total_frames)
-                    print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)}", 
+                    print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)} | Cores:{len(used_cores)}", 
                           end="", flush=True)
                 
                 # Frame rate control
@@ -365,18 +382,20 @@ def main():
         if state.frame_count > 0:
             total_time = time.time() - state.start_time
             print(f"\n{'='*60}")
-            print(f"Processed: {state.frame_count} frames in {total_time:.1f}s")
-            print(f"Avg FPS: {state.frame_count/total_time:.2f}")
-            print(f"Avg Inference: {state.total_inference_time/state.frame_count*1000:.1f}ms")
+            print(f"FINAL STATISTICS:")
+            print(f"  Processed: {state.frame_count} frames in {total_time:.1f}s")
+            print(f"  Average FPS: {state.frame_count/total_time:.2f}")
+            print(f"  Average Inference: {state.total_inference_time/state.frame_count*1000:.1f}ms")
+            print(f"  CPU Cores Used: {len(used_cores)} cores")
             print(f"{'='*60}")
         
         return 0
         
     except KeyboardInterrupt:
-        print("\nInterrupted by user")
+        print("\nInterrupted by user (Ctrl+C)")
         return 0
     except Exception as e:
-        print(f"Fatal error: {e}")
+        logger.error(f"Fatal error: {e}")
         import traceback
         traceback.print_exc()
         return 1
