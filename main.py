@@ -26,7 +26,7 @@ class ProcessingState:
 
 @dataclass 
 class ModelConfig:
-    """Cấu hình model"""
+    """Cấu hình model Caffe"""
     input_width: int = 300
     input_height: int = 300
     scale_factor: float = 0.00784313725490196
@@ -256,36 +256,28 @@ def video_capture_context(source):
     finally:
         cap.release()
 
-def load_model(args):
-    """Load model (Caffe or TFLite)"""
-    use_tflite = getattr(args, 'backend', 'caffe') == 'tflite'
+def load_caffe_model(args):
+    """Load Caffe model với OpenCV DNN"""
+    model = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
     
-    if use_tflite:
-        try:
-            from tflite_runtime.interpreter import Interpreter
-        except ImportError:
-            from tensorflow.lite.python.interpreter import Interpreter
-        
-        model = Interpreter(model_path=args.tflite)
-        model.allocate_tensors()
-        print(f"Loaded TFLite model: {Path(args.tflite).name}")
-    else:
-        model = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
-        
-        # Set backend
-        backend = cv2.dnn.DNN_BACKEND_OPENCV
-        target = cv2.dnn.DNN_TARGET_CPU
-        
-        if os.environ.get('OPENCV_DNN_OPENCL', '0') == '1':
-            cv2.ocl.setUseOpenCL(True)
-            if cv2.ocl.haveOpenCL():
-                target = cv2.dnn.DNN_TARGET_OPENCL
-        
-        model.setPreferableBackend(backend)
-        model.setPreferableTarget(target)
-        print(f"Loaded Caffe model: {Path(args.weights).name}")
+    # Set backend - chỉ dùng OpenCV backend cho Caffe
+    backend = cv2.dnn.DNN_BACKEND_OPENCV
+    target = cv2.dnn.DNN_TARGET_CPU
     
-    return model, use_tflite
+    # Kiểm tra OpenCL nếu có
+    if os.environ.get('OPENCV_DNN_OPENCL', '0') == '1':
+        cv2.ocl.setUseOpenCL(True)
+        if cv2.ocl.haveOpenCL():
+            target = cv2.dnn.DNN_TARGET_OPENCL
+            print("Using OpenCL acceleration")
+    
+    model.setPreferableBackend(backend)
+    model.setPreferableTarget(target)
+    
+    print(f"Loaded Caffe model: {Path(args.weights).name}")
+    print(f"Backend: OpenCV DNN | Target: {'OpenCL' if target == cv2.dnn.DNN_TARGET_OPENCL else 'CPU'}")
+    
+    return model
 
 def main():
     parser = build_arg_parser()
@@ -314,8 +306,8 @@ def main():
                                cfg.get('display', {}).get('max_width', 1280),
                                cfg.get('display', {}).get('max_height', 720))
         
-        # Load model
-        model, use_tflite = load_model(args)
+        # Load Caffe model
+        model = load_caffe_model(args)
         
         # Setup monitoring
         monitor = SystemMonitor(used_cores)
@@ -333,6 +325,7 @@ def main():
             frame_interval = 1.0 / args.fps
             
             print(f"Video: {total_frames} frames @ {original_fps:.1f} FPS")
+            print(f"Processing at: {args.fps} FPS")
             
             while not stop_event.is_set():
                 loop_start = time.time()
@@ -347,33 +340,23 @@ def main():
                 roi_frame, roi_bbox = roi_processor.apply_roi(frame)
                 roi_processor.draw_overlay(frame)
                 
-                # Prepare model input
+                # Prepare Caffe model input
                 input_size = (model_cfg.input_width, model_cfg.input_height)
                 resized_roi = cv2.resize(roi_frame, input_size)
                 
-                # Inference
+                # Caffe inference
                 inference_start = time.time()
                 
-                if use_tflite:
-                    # TFLite inference
-                    input_details = model.get_input_details()
-                    model.set_tensor(input_details[0]['index'], 
-                                    np.expand_dims(resized_roi.astype(np.float32), 0))
-                    model.invoke()
-                    # TODO: Parse TFLite output to Caffe format
-                    pred = np.array([[[]]])
-                else:
-                    # Caffe inference
-                    blob = cv2.dnn.blobFromImage(
-                        resized_roi,
-                        scalefactor=model_cfg.scale_factor,
-                        size=input_size,
-                        mean=tuple(model_cfg.mean_values),
-                        swapRB=model_cfg.swap_rb,
-                        crop=model_cfg.crop
-                    )
-                    model.setInput(blob)
-                    pred = model.forward()
+                blob = cv2.dnn.blobFromImage(
+                    resized_roi,
+                    scalefactor=model_cfg.scale_factor,
+                    size=input_size,
+                    mean=tuple(model_cfg.mean_values),
+                    swapRB=model_cfg.swap_rb,
+                    crop=model_cfg.crop
+                )
+                model.setInput(blob)
+                pred = model.forward()
                 
                 inference_time = time.time() - inference_start
                 state.total_inference_time += inference_time
@@ -392,7 +375,7 @@ def main():
                 current_fps = 1.0 / max(time.time() - loop_start, 1e-6)
                 system_cpu, _, ram_usage = monitor.get_metrics()
                 
-                # Update EMA
+                # Update EMA (Exponential Moving Average)
                 if state.ema_fps is None:
                     state.ema_fps = current_fps
                     state.ema_inf = inference_time * 1000

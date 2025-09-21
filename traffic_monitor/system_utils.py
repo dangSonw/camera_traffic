@@ -7,9 +7,7 @@ import time
 from contextlib import contextmanager
 from typing import List, Optional, Tuple
 
-import cv2
 import psutil
-import torch
 
 logger = logging.getLogger(__name__)
 
