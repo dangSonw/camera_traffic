@@ -38,6 +38,7 @@
       "use_opencl": true
     }
   },
+  "processing": {
   "detection": {
     "conf_thresh": 0.50,
     "allowed_classes": ["car", "bus", "motorbike", "person", "bicycle"],
@@ -73,10 +74,37 @@
         "scale": 0.7,
         "thickness": 2,
         "offset_y": 10
+      },
+      "counting_line": {
+        "enabled": true,
+        "position": 0.5,
+        "color": [0, 0, 255],
+        "thickness": 3,
+        "extend_factor": 0.1
       }
     }
   },
-  "processing": {
+  "counting": {
+    "enabled": true,
+    "display_stats": true,
+    "stats_position": {
+      "x": 50,
+      "y": 50
+    },
+    "stats_font": {
+      "font": "FONT_HERSHEY_SIMPLEX",
+      "scale": 1.2,
+      "color": [255, 255, 255],
+      "thickness": 2,
+      "line_spacing": 35,
+      "background": {
+        "enabled": true,
+        "color": [0, 0, 0],
+        "alpha": 0.7,
+        "padding": 10
+      }
+    }
+  },
     "default_fps": 30.0,
     "frame_interval_sleep": true,
     "progress_update_interval": 10,

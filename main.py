@@ -20,6 +20,15 @@ class ProcessingState:
     ema_fps: Optional[float] = None
     ema_inf: Optional[float] = None
 
+@dataclass
+class CountingStats:
+    before_line: int = 0
+    after_line: int = 0
+    
+    def reset(self):
+        self.before_line = 0
+        self.after_line = 0
+
 @dataclass 
 class ModelConfig:
     input_width: int
@@ -43,6 +52,17 @@ class ROIProcessor:
         # Load overlay config
         self.overlay_cfg = cfg.get('display', {}).get('overlay', {})
         
+        # Counting line config (chỉ cho rectangle)
+        self.counting_cfg = self.overlay_cfg.get('counting_line', {})
+        self.counting_enabled = self.counting_cfg.get('enabled', True) and self.roi_type == 'rectangle'
+        self.counting_line_pos = float(self.counting_cfg.get('position', 0.5))  # 0.0 to 1.0
+        self.counting_line_color = tuple(self.counting_cfg.get('color', [0, 0, 255]))
+        self.counting_line_thickness = int(self.counting_cfg.get('thickness', 3))
+        self.counting_extend_factor = float(self.counting_cfg.get('extend_factor', 0.1))
+        
+        # Calculate counting line coordinates
+        self.counting_line_coords = self._calculate_counting_line()
+        
     def _get_roi_points(self) -> np.ndarray:
         if not self.enabled:
             return np.array([])
@@ -57,6 +77,28 @@ class ROIProcessor:
             pts = [[x, y], [x+w, y], [x+w, y+h], [x, y+h]]
         
         return np.array(pts, np.int32)
+    
+    def _calculate_counting_line(self) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """Calculate counting line coordinates for rectangle ROI"""
+        if not self.counting_enabled or self.roi_type != 'rectangle' or len(self.pts_px) < 4:
+            return None
+            
+        # Get rectangle bounds
+        rect_cfg = self.roi_cfg.get('rectangle', {})
+        x = rect_cfg.get('x', 400)
+        y = rect_cfg.get('y', 300)
+        w = rect_cfg.get('width', 800)
+        h = rect_cfg.get('height', 600)
+        
+        # Calculate vertical line position (along width)
+        line_x = int(x + w * self.counting_line_pos)
+        
+        # Extend line beyond rectangle bounds
+        extend_height = int(h * self.counting_extend_factor)
+        line_y1 = y - extend_height
+        line_y2 = y + h + extend_height
+        
+        return ((line_x, line_y1), (line_x, line_y2))
     
     def apply_roi(self, frame: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
         h, w = frame.shape[:2]
@@ -112,6 +154,31 @@ class ROIProcessor:
         cv2.putText(frame, f"ROI: {self.roi_type.upper()}", 
                    (self.pts_px[0][0], self.pts_px[0][1] - label_offset_y), 
                    font, font_scale, self.color, font_thickness)
+        
+        # Draw counting line if enabled
+        if self.counting_enabled and self.counting_line_coords:
+            pt1, pt2 = self.counting_line_coords
+            cv2.line(frame, pt1, pt2, self.counting_line_color, self.counting_line_thickness)
+    
+    def count_objects_by_line(self, detections: List) -> CountingStats:
+        """Count objects before and after the counting line"""
+        stats = CountingStats()
+        
+        if not self.counting_enabled or not self.counting_line_coords:
+            return stats
+            
+        line_x = self.counting_line_coords[0][0]  # X coordinate of vertical line
+        
+        for x, y, w, h, conf, class_id in detections:
+            # Use center point of detection box
+            center_x = x + w // 2
+            
+            if center_x < line_x:
+                stats.before_line += 1
+            else:
+                stats.after_line += 1
+                
+        return stats
     
     def point_in_roi(self, point: Tuple[int, int]) -> bool:
         if not self.enabled or len(self.pts_px) == 0:
@@ -191,6 +258,29 @@ class Visualizer:
         self.label_offset_x = int(self.label_cfg.get('offset_x', 2))
         self.label_offset_y = int(self.label_cfg.get('offset_y', 5))
         
+        # Counting display config
+        self.counting_cfg = cfg.get('counting', {})
+        self.counting_enabled = self.counting_cfg.get('enabled', True)
+        self.display_stats = self.counting_cfg.get('display_stats', True)
+        
+        if self.display_stats:
+            stats_cfg = self.counting_cfg.get('stats_font', {})
+            self.stats_pos = self.counting_cfg.get('stats_position', {})
+            self.stats_x = int(self.stats_pos.get('x', 50))
+            self.stats_y = int(self.stats_pos.get('y', 50))
+            self.stats_font = getattr(cv2, stats_cfg.get('font', 'FONT_HERSHEY_SIMPLEX'))
+            self.stats_scale = float(stats_cfg.get('scale', 1.2))
+            self.stats_color = tuple(stats_cfg.get('color', [255, 255, 255]))
+            self.stats_thickness = int(stats_cfg.get('thickness', 2))
+            self.stats_line_spacing = int(stats_cfg.get('line_spacing', 35))
+            
+            # Background config
+            bg_cfg = stats_cfg.get('background', {})
+            self.stats_bg_enabled = bg_cfg.get('enabled', True)
+            self.stats_bg_color = tuple(bg_cfg.get('color', [0, 0, 0]))
+            self.stats_bg_alpha = float(bg_cfg.get('alpha', 0.7))
+            self.stats_bg_padding = int(bg_cfg.get('padding', 10))
+        
         if show:
             cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(self.window_name, self.max_w, self.max_h)
@@ -202,6 +292,43 @@ class Visualizer:
                 label = f"{classes[class_id]}:{conf:.2f}"
                 cv2.putText(frame, label, (x + self.label_offset_x, y - self.label_offset_y),
                            self.label_font, self.label_scale, self.label_color, self.label_thickness)
+    
+    def draw_counting_stats(self, frame: np.ndarray, stats: CountingStats) -> None:
+        """Draw counting statistics on frame"""
+        if not self.display_stats or not self.counting_enabled:
+            return
+            
+        # Prepare text lines
+        texts = [
+            f"Before Line: {stats.before_line}",
+            f"After Line: {stats.after_line}",
+            f"Total: {stats.before_line + stats.after_line}"
+        ]
+        
+        # Calculate background rectangle if enabled
+        if self.stats_bg_enabled:
+            # Calculate text dimensions
+            text_sizes = [cv2.getTextSize(text, self.stats_font, self.stats_scale, self.stats_thickness)[0] 
+                         for text in texts]
+            max_width = max(size[0] for size in text_sizes)
+            total_height = len(texts) * self.stats_line_spacing
+            
+            # Draw background
+            bg_x1 = self.stats_x - self.stats_bg_padding
+            bg_y1 = self.stats_y - self.stats_bg_padding - text_sizes[0][1]
+            bg_x2 = self.stats_x + max_width + self.stats_bg_padding
+            bg_y2 = self.stats_y + total_height - self.stats_line_spacing + self.stats_bg_padding
+            
+            # Create overlay for semi-transparent background
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), self.stats_bg_color, -1)
+            cv2.addWeighted(overlay, self.stats_bg_alpha, frame, 1 - self.stats_bg_alpha, 0, frame)
+        
+        # Draw text lines
+        for i, text in enumerate(texts):
+            y_pos = self.stats_y + i * self.stats_line_spacing
+            cv2.putText(frame, text, (self.stats_x, y_pos),
+                       self.stats_font, self.stats_scale, self.stats_color, self.stats_thickness)
     
     def display(self, frame: np.ndarray):
         if not self.show:
@@ -335,8 +462,14 @@ def main():
                 filtered_dets = [d for d in detections 
                                 if roi_processor.point_in_roi((d[0] + d[2]//2, d[1] + d[3]//2))]
                 
+                # Count objects by counting line
+                counting_stats = roi_processor.count_objects_by_line(filtered_dets)
+                
                 # Draw detections
                 visualizer.draw_detections(frame, filtered_dets, model_cfg.classes)
+                
+                # Draw counting statistics
+                visualizer.draw_counting_stats(frame, counting_stats)
                 
                 # Calculate metrics with config values
                 current_fps = 1.0 / max(time.time() - loop_start, min_loop_time)
@@ -354,7 +487,7 @@ def main():
                 # Use config for progress update interval
                 if state.frame_count % progress_interval == 0:
                     progress = print_progress_bar(state.frame_count, total_frames)
-                    print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)}", 
+                    print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)} | Before:{counting_stats.before_line} | After:{counting_stats.after_line}", 
                           end="", flush=True)
 
                 # Frame rate control with config
