@@ -1,28 +1,19 @@
 import time
 import sys
-from pathlib import Path
 import cv2
 import numpy as np
 from typing import List, Tuple, Optional, Dict, Any
-import threading
 import os
 from dataclasses import dataclass
 from contextlib import contextmanager
-import logging
 
-# Import modules
 from traffic_monitor.system_utils import (
-    start_quit_listener, setup_cpu_affinity, print_progress_bar,
+    setup_cpu_affinity, print_progress_bar,
 )
 from traffic_monitor.config import build_arg_parser, load_runtime_config
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 @dataclass
 class ProcessingState:
-    """Trạng thái xử lý video"""
     frame_count: int = 0
     total_inference_time: float = 0.0
     start_time: float = 0.0
@@ -31,7 +22,6 @@ class ProcessingState:
 
 @dataclass 
 class ModelConfig:
-    """Cấu hình model Caffe"""
     input_width: int = 300
     input_height: int = 300
     scale_factor: float = 0.00784313725490196
@@ -47,8 +37,6 @@ class ModelConfig:
             self.classes = []
 
 class ROIProcessor:
-    """Xử lý vùng ROI với drawing utilities"""
-    
     def __init__(self, cfg: Dict[str, Any]):
         self.cfg = cfg
         self.roi_cfg = cfg.get('model', {}).get('roi', {})
@@ -59,7 +47,6 @@ class ROIProcessor:
         self.thickness = int(self.roi_cfg.get('thickness', 2))
         
     def _get_roi_points(self) -> np.ndarray:
-        """Lấy các điểm ROI"""
         if not self.enabled:
             return np.array([])
             
@@ -75,58 +62,45 @@ class ROIProcessor:
         return np.array(pts, np.int32)
     
     def apply_roi(self, frame: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
-        """Áp dụng ROI và trả về frame + bbox"""
         h, w = frame.shape[:2]
         
         if not self.enabled:
             return frame.copy(), (0, 0, w, h)
-        
-        # Tạo mask và áp dụng
+
         mask = np.zeros((h, w), dtype=np.uint8)
         cv2.fillPoly(mask, [self.pts_px], 255)
         roi_frame = cv2.bitwise_and(frame, frame, mask=mask)
-        
-        # Tính bounding box từ ROI points
+
         x_min, y_min = np.min(self.pts_px, axis=0)
         x_max, y_max = np.max(self.pts_px, axis=0)
         x_min, x_max = max(0, x_min), min(w, x_max)
         y_min, y_max = max(0, y_min), min(h, y_max)
         
-        # Crop ROI
         cropped = roi_frame[y_min:y_max, x_min:x_max].copy() if x_min < x_max and y_min < y_max else frame.copy()
         
         return cropped, (x_min, y_min, x_max - x_min, y_max - y_min)
     
     def draw_overlay(self, frame: np.ndarray) -> None:
-        """Vẽ ROI overlay với transparency"""
-        if not self.enabled or len(self.pts_px) == 0:
-            return
-        
+        if not self.enabled or len(self.pts_px) == 0: return
         overlay = frame.copy()
         cv2.fillPoly(overlay, [self.pts_px], self.color)
         cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
   
         cv2.polylines(frame, [self.pts_px], True, self.color, self.thickness)
         
-        # Vẽ corners với circles
         for i, pt in enumerate(self.pts_px):
             cv2.circle(frame, tuple(pt), 5, (0, 0, 255), -1)
             cv2.circle(frame, tuple(pt), 7, (255, 255, 255), 1)
-        
-        # Label
         cv2.putText(frame, f"ROI: {self.roi_type.upper()}", 
                    (self.pts_px[0][0], self.pts_px[0][1] - 10), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, self.color, 2)
     
     def point_in_roi(self, point: Tuple[int, int]) -> bool:
-        """Kiểm tra điểm trong ROI bằng cv2.pointPolygonTest"""
         if not self.enabled or len(self.pts_px) == 0:
             return True
         return cv2.pointPolygonTest(self.pts_px, point, False) >= 0
 
 class DetectionProcessor:
-    """Xử lý detection với NMS"""
-    
     def __init__(self, cfg: Dict[str, Any], model_cfg: ModelConfig):
         self.model_cfg = model_cfg
         det_cfg = cfg.get('detection', {})
@@ -136,28 +110,22 @@ class DetectionProcessor:
     
     def process(self, pred: np.ndarray, roi_bbox: Tuple[int, int, int, int], 
                 frame_shape: Tuple[int, int]) -> List[Tuple[int, int, int, int, float, int]]:
-        """Xử lý predictions với NMS"""
         h, w = frame_shape
         roi_x, roi_y, roi_w, roi_h = roi_bbox
         
-        # Extract valid detections
         valid_mask = pred[0, 0, :, 2] > self.conf_thresh
         valid_dets = pred[0, 0, valid_mask]
         
-        if len(valid_dets) == 0:
-            return []
+        if len(valid_dets) == 0:  return []
         
         boxes, confidences, class_ids = [], [], []
         
         for det in valid_dets:
             class_id = int(det[1])
             
-            # Filter by class
             if self.allowed_classes and class_id < len(self.model_cfg.classes):
                 if self.model_cfg.classes[class_id].lower() not in self.allowed_classes:
                     continue
-            
-            # Scale coordinates
             box = det[3:7]
             if roi_w > 0 and roi_h > 0:
                 x1 = int(box[0] * roi_w + roi_x)
@@ -174,19 +142,16 @@ class DetectionProcessor:
                 confidences.append(float(det[2]))
                 class_ids.append(class_id)
 
-        if not boxes:
-            return []
+        if not boxes: return []
         
         indices = cv2.dnn.NMSBoxes(boxes, confidences, self.conf_thresh, self.nms_thresh)
-        if len(indices) == 0:
-            return []
+        if len(indices) == 0: return []
 
         indices = indices.flatten() if hasattr(indices, 'flatten') else indices
         return [(boxes[i][0], boxes[i][1], boxes[i][2], boxes[i][3], 
                  confidences[i], class_ids[i]) for i in indices]
 
 class Visualizer:
-    """Simplified visualization for single frame display"""
     def __init__(self, show: bool, max_width: int = 1280, max_height: int = 720):
         self.show = show
         self.max_w = max_width
@@ -198,36 +163,22 @@ class Visualizer:
     
     @staticmethod
     def draw_detections(frame: np.ndarray, detections: List, classes: List[str]) -> None:
-        """Vẽ bounding boxes với style đẹp"""
         for x, y, w, h, conf, class_id in detections:
-            # Box với rounded corners effect
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.rectangle(frame, (x-1, y-1), (x + w+1, y + h+1), (0, 0, 0), 1)
-            
-            # Label với background
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 4)      
             if class_id < len(classes):
                 label = f"{classes[class_id]}:{conf:.2f}"
-                label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-                
-                # Background cho text
-                cv2.rectangle(frame, (x, y - 20), (x + label_size[0] + 5, y), (0, 255, 0), -1)
                 cv2.putText(frame, label, (x + 2, y - 5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 199, 200), 2)
     
-    def display(self, frame: np.ndarray, stop_event: threading.Event) -> bool:
-        """Display frame, check for quit via stop_event (no local q key handling)"""
+    def display(self, frame: np.ndarray):
         if not self.show:
             return False
         
         cv2.imshow('Traffic Monitor', frame)
-        cv2.waitKey(1)  # Just process GUI events, don't check for 'q' here
-        
-        # Return True if stop_event is set (by quit_listener thread)
-        return stop_event.is_set()
+        cv2.waitKey(1) 
 
 @contextmanager
 def video_capture_context(source):
-    """Context manager cho VideoCapture"""
     cap = cv2.VideoCapture(int(source) if str(source).isdigit() else str(source))
     try:
         if not cap.isOpened():
@@ -237,7 +188,6 @@ def video_capture_context(source):
         cap.release()
 
 def load_caffe_model(args):
-    """Load Caffe model với OpenCV DNN"""
     model = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
     backend = cv2.dnn.DNN_BACKEND_OPENCV
     target = cv2.dnn.DNN_TARGET_CPU
@@ -246,7 +196,6 @@ def load_caffe_model(args):
         cv2.ocl.setUseOpenCL(True)
         if cv2.ocl.haveOpenCL():
             target = cv2.dnn.DNN_TARGET_OPENCL
-            print("Using OpenCL acceleration")
     
     model.setPreferableBackend(backend)
     model.setPreferableTarget(target)
@@ -258,14 +207,10 @@ def main():
     args = parser.parse_args()
     
     try:
-        # Setup CPU affinity
         used_cores = setup_cpu_affinity(args.core)
-        logger.info(f"Using CPU cores: {used_cores}")
-        
-        # Load configuration
+
         cfg = load_runtime_config(args)
         
-        # Initialize components
         model_cfg_dict = cfg.get('model', {})
         model_cfg = ModelConfig(
             input_width=int(model_cfg_dict.get('input_width', 300)),
@@ -279,23 +224,12 @@ def main():
         
         roi_processor = ROIProcessor(cfg)
         detection_processor = DetectionProcessor(cfg, model_cfg)
-        visualizer = Visualizer(args.show, 
-                               cfg.get('display', {}).get('max_width', 1280),
-                               cfg.get('display', {}).get('max_height', 720))
+        visualizer = Visualizer(args.show, cfg.get('display', {}).get('max_width', 1280), cfg.get('display', {}).get('max_height', 720))
         
         # Load Caffe model
         model = load_caffe_model(args)
         
         state = ProcessingState(start_time=time.time())
-        
-        # Start quit listener thread for 'q' key detection
-        stop_event = threading.Event()
-        quit_thread = start_quit_listener(stop_event)
-        logger.info(f"Quit listener thread started: {quit_thread.name}")
-        
-        print("=== STARTING VIDEO PROCESSING ===")
-        print("Press 'q' to quit at any time...")
-        print(f"Running on {len(used_cores)} CPU core(s): {used_cores}")
         
         # Main processing loop
         with video_capture_context(args.source) as cap:
@@ -306,7 +240,7 @@ def main():
             print(f"Video: {total_frames} frames @ {original_fps:.1f} FPS")
             print(f"Processing at: {args.fps} FPS")
             
-            while not stop_event.is_set():
+            while True:
                 loop_start = time.time()
                 ret, frame = cap.read()
                 if not ret:
@@ -362,40 +296,21 @@ def main():
                     state.ema_fps = (1 - alpha) * state.ema_fps + alpha * current_fps
                     state.ema_inf = (1 - alpha) * state.ema_inf + alpha * (inference_time * 1000)
                 
-                # Display and check for quit (uses stop_event from quit_listener)
-                if visualizer.display(frame, stop_event):
-                    logger.info("User requested quit")
-                    break
-                
-                # Print progress
+                if visualizer.display(frame): break
+
                 if state.frame_count % 10 == 0:
                     progress = print_progress_bar(state.frame_count, total_frames)
-                    print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)} | Cores:{len(used_cores)}", 
+                    print(f"\r{progress} | FPS:{state.ema_fps:.1f} | Objects:{len(filtered_dets)}", 
                           end="", flush=True)
-                
-                # Frame rate control
+
                 elapsed = time.time() - loop_start
                 if elapsed < frame_interval:
                     time.sleep(frame_interval - elapsed)
-        
-        # Final stats
-        if state.frame_count > 0:
-            total_time = time.time() - state.start_time
-            print(f"\n{'='*60}")
-            print(f"FINAL STATISTICS:")
-            print(f"  Processed: {state.frame_count} frames in {total_time:.1f}s")
-            print(f"  Average FPS: {state.frame_count/total_time:.2f}")
-            print(f"  Average Inference: {state.total_inference_time/state.frame_count*1000:.1f}ms")
-            print(f"  CPU Cores Used: {len(used_cores)} cores")
-            print(f"{'='*60}")
-        
-        return 0
         
     except KeyboardInterrupt:
         print("\nInterrupted by user (Ctrl+C)")
         return 0
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
         import traceback
         traceback.print_exc()
         return 1
