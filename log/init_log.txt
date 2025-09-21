@@ -1,8 +1,0 @@
-=== ENHANCED INIT CONFIG ===
-Source: videos/GT1.MP4
-Weights: models/MobileNetSSD_deploy.caffemodel
-Target FPS: 5.0
-Image size: 1080
-CPU physical cores: 4
-CPU logical threads: 4
-Used cores: [0, 1, 2, 3]
