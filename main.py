@@ -11,7 +11,7 @@ from contextlib import contextmanager
 
 # Import modules
 from traffic_monitor.system_utils import (
-    start_quit_listener, SystemMonitor, setup_cpu_affinity, print_progress_bar,
+    start_quit_listener, setup_cpu_affinity, print_progress_bar,
 )
 from traffic_monitor.config import build_arg_parser, load_runtime_config
 
@@ -97,12 +97,10 @@ class ROIProcessor:
         if not self.enabled or len(self.pts_px) == 0:
             return
         
-        # Semi-transparent overlay
         overlay = frame.copy()
         cv2.fillPoly(overlay, [self.pts_px], self.color)
         cv2.addWeighted(overlay, 0.2, frame, 0.8, 0, frame)
-        
-        # Vẽ border và corners
+  
         cv2.polylines(frame, [self.pts_px], True, self.color, self.thickness)
         
         # Vẽ corners với circles
@@ -170,23 +168,20 @@ class DetectionProcessor:
                 boxes.append([x1, y1, bw, bh])
                 confidences.append(float(det[2]))
                 class_ids.append(class_id)
-        
-        # Apply NMS
+
         if not boxes:
             return []
         
         indices = cv2.dnn.NMSBoxes(boxes, confidences, self.conf_thresh, self.nms_thresh)
         if len(indices) == 0:
             return []
-        
-        # Return filtered detections
+
         indices = indices.flatten() if hasattr(indices, 'flatten') else indices
         return [(boxes[i][0], boxes[i][1], boxes[i][2], boxes[i][3], 
                  confidences[i], class_ids[i]) for i in indices]
 
 class Visualizer:
     """Simplified visualization for single frame display"""
-    
     def __init__(self, show: bool, max_width: int = 1280, max_height: int = 720):
         self.show = show
         self.max_w = max_width
@@ -214,30 +209,6 @@ class Visualizer:
                 cv2.putText(frame, label, (x + 2, y - 5),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
     
-    def add_hud(self, frame: np.ndarray, stats: Dict) -> None:
-        """Thêm HUD với thông tin lên frame gốc"""
-        if not self.show:
-            return
-            
-        # Semi-transparent background for HUD
-        hud_h = 120
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (10, 10), (300, hud_h), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-        
-        # Draw stats
-        y_offset = 35
-        texts = [
-            f"FPS: {stats.get('fps', 0):.1f}",
-            f"Objects: {stats.get('objects', 0)}",
-            f"Inference: {stats.get('inference_ms', 0):.1f}ms",
-            f"CPU: {stats.get('cpu', 0):.0f}%"
-        ]
-        
-        for i, text in enumerate(texts):
-            cv2.putText(frame, text, (20, y_offset + i * 25),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-    
     def display(self, frame: np.ndarray) -> bool:
         """Display frame, return True if quit"""
         if not self.show:
@@ -259,12 +230,9 @@ def video_capture_context(source):
 def load_caffe_model(args):
     """Load Caffe model với OpenCV DNN"""
     model = cv2.dnn.readNetFromCaffe(args.prototxt, args.weights)
-    
-    # Set backend - chỉ dùng OpenCV backend cho Caffe
     backend = cv2.dnn.DNN_BACKEND_OPENCV
     target = cv2.dnn.DNN_TARGET_CPU
-    
-    # Kiểm tra OpenCL nếu có
+
     if os.environ.get('OPENCV_DNN_OPENCL', '0') == '1':
         cv2.ocl.setUseOpenCL(True)
         if cv2.ocl.haveOpenCL():
@@ -273,9 +241,6 @@ def load_caffe_model(args):
     
     model.setPreferableBackend(backend)
     model.setPreferableTarget(target)
-    
-    print(f"Loaded Caffe model: {Path(args.weights).name}")
-    print(f"Backend: OpenCV DNN | Target: {'OpenCL' if target == cv2.dnn.DNN_TARGET_OPENCL else 'CPU'}")
     
     return model
 
@@ -309,8 +274,6 @@ def main():
         # Load Caffe model
         model = load_caffe_model(args)
         
-        # Setup monitoring
-        monitor = SystemMonitor(used_cores)
         state = ProcessingState(start_time=time.time())
         
         stop_event = threading.Event()
@@ -373,7 +336,6 @@ def main():
                 
                 # Calculate metrics
                 current_fps = 1.0 / max(time.time() - loop_start, 1e-6)
-                system_cpu, _, ram_usage = monitor.get_metrics()
                 
                 # Update EMA (Exponential Moving Average)
                 if state.ema_fps is None:
@@ -384,15 +346,6 @@ def main():
                     state.ema_fps = (1 - alpha) * state.ema_fps + alpha * current_fps
                     state.ema_inf = (1 - alpha) * state.ema_inf + alpha * (inference_time * 1000)
                 
-                # Add HUD to main frame
-                stats = {
-                    'fps': state.ema_fps,
-                    'objects': len(filtered_dets),
-                    'inference_ms': state.ema_inf,
-                    'cpu': system_cpu
-                }
-                
-                visualizer.add_hud(frame, stats)
                 
                 if visualizer.display(frame):
                     stop_event.set()

@@ -57,34 +57,6 @@ def start_quit_listener(stop_event: threading.Event):
     t.start()
     return t
 
-
-class SystemMonitor:
-    def __init__(self, used_cores: Optional[List[int]] = None):
-        self.process = psutil.Process(os.getpid())
-        self.used_cores = used_cores or []
-        try:
-            psutil.cpu_percent(interval=None)
-        except Exception:
-            pass
-
-    def get_metrics(self) -> Tuple[float, Optional[float], float]:
-        try:
-            system_cpu = psutil.cpu_percent(interval=None)
-        except Exception:
-            system_cpu = 0.0
-        affinity_cpu = None
-        try:
-            if self.used_cores:
-                per_core = psutil.cpu_percent(interval=None, percpu=True)
-                selected = [per_core[i] for i in self.used_cores if 0 <= i < len(per_core)]
-                if selected:
-                    affinity_cpu = float(sum(selected) / len(selected))
-        except Exception:
-            affinity_cpu = None
-        ram_usage = self.process.memory_info().rss / (1024 * 1024)
-        return system_cpu, affinity_cpu, ram_usage
-
-
 def setup_cpu_affinity(core_count: Optional[int]) -> List[int]:
     if core_count is not None:
         try:
