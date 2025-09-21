@@ -43,7 +43,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     
     # Display options
     parser.add_argument('--show', action='store_true', 
-                       help='Show detection results in a window')l
+                       help='Show detection results in a window')
     
     # Performance options
     parser.add_argument('--core', type=int, default=None, 
