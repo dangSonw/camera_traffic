@@ -4,10 +4,14 @@ import cv2
 import numpy as np
 from typing import List, Tuple, Optional, Dict, Any
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from contextlib import contextmanager
 from collections import deque
 from enum import Enum
+import datetime
+import serial
+
+# connect = serial.Serial("/dev/ttyUSB0", baudrate=115200, timeout=1)
 
 from traffic_monitor.system_utils import (
     setup_cpu_affinity, print_progress_bar,
@@ -54,6 +58,10 @@ class TrafficMonitorState:
     bound: int = 5 
     full_region_count: int = 0
     consecutive_red_detections: int = 0
+    max_count: int = 0
+    arr_count: List[int] = field(default_factory=list)
+    red_light_time: Optional[datetime.datetime] = datetime.datetime.now()
+    green_light_time: Optional[datetime.datetime] = datetime.datetime.now()
     
     def __post_init__(self):
         if self.frame_buffer is None:
@@ -455,7 +463,8 @@ def process_traffic_light_logic(traffic_state: TrafficMonitorState,
         
         if traffic_state.current_light == TrafficLightState.RED:
             if difference < traffic_state.bound:
-                print(f"\nTraffic Light: RED -> GREEN (Difference: {difference:.1f} < {traffic_state.bound})")
+                traffic_state.green_light_time = datetime.datetime.now()
+                print(f"\nTraffic Light: RED -> GREEN , Time: {traffic_state.green_light_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 traffic_state.current_light = TrafficLightState.GREEN
                 roi_processor.switch_roi_type('full_region')
                 traffic_state.full_region_count = 0
@@ -468,7 +477,9 @@ def process_traffic_light_logic(traffic_state: TrafficMonitorState,
             if difference > traffic_state.bound:
                 traffic_state.consecutive_red_detections += 1
                 if traffic_state.consecutive_red_detections > 5:
-                    print(f"\nTraffic Light: GREEN -> RED (Difference: {difference:.1f} > {traffic_state.bound}) after {traffic_state.consecutive_red_detections} detections")
+                    traffic_state.red_light_time = datetime.datetime.now()
+                    print(f"\nTraffic Light: GREEN -> RED , Time: {traffic_state.red_light_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    print(f"\n{traffic_state.max_count},{traffic_state.green_light_time.strftime('%Y-%m-%d %H:%M:%S')},{traffic_state.red_light_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                     traffic_state.current_light = TrafficLightState.RED
                     roi_processor.switch_roi_type('signal_region')
                     traffic_state.consecutive_red_detections = 0
@@ -577,8 +588,12 @@ def main():
                     counting_stats = CountingStats(before_line=total_count, after_line=0)
                     print(f"\nFull Detection ROI - Total vehicles: {total_count}")
                     traffic_state.full_region_count += 1
+                    traffic_state.arr_count.append(total_count)
+                    traffic_state.max_count = max(traffic_state.max_count, total_count)
                     if traffic_state.full_region_count >= 5:
                         roi_processor.switch_roi_type('signal_region')
+                        print(f"max_count: {traffic_state.max_count}, arr_count: {traffic_state.arr_count}")
+                        traffic_state.arr_count = []
                         traffic_state.full_region_count = 0
                 process_traffic_light_logic(traffic_state, counting_stats, roi_processor)
                 visualizer.draw_detections(frame, filtered_dets, model_cfg.classes)
