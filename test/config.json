@@ -1,0 +1,193 @@
+{
+  "model": {
+    "roi": {
+      "enabled": true,
+      "full_region": {
+        "points": [
+          [
+            1399,
+            808
+          ],
+          [
+            1410,
+            1121
+          ],
+          [
+            1996,
+            1076
+          ],
+          [
+            1696,
+            819
+          ]
+        ]
+      },
+      "color": [
+        0,
+        255,
+        0
+      ],
+      "thickness": 2
+    },
+    "scale_factor": 0.00784313725490196,
+    "mean_values": [
+      127.5,
+      127.5,
+      127.5
+    ],
+    "swap_rb": false,
+    "crop": false,
+    "classes": [
+      "background",
+      "aeroplane",
+      "bicycle",
+      "bird",
+      "boat",
+      "bottle",
+      "bus",
+      "car",
+      "cat",
+      "chair",
+      "cow",
+      "diningtable",
+      "dog",
+      "horse",
+      "motorbike",
+      "person",
+      "pottedplant",
+      "sheep",
+      "sofa",
+      "train",
+      "tvmonitor"
+    ],
+    "backend": {
+      "name": "opencv",
+      "target": "cpu",
+      "use_opencl": true
+    }
+  },
+  "processing": {
+    "file": {
+      "skip_frame": 20
+    },
+    "detection": {
+      "conf_thresh": 0.35,
+      "allowed_classes": [
+        "car",
+        "bus",
+        "motorbike",
+        "person",
+        "bicycle"
+      ],
+      "nms_threshold": 0.4
+    },
+    "display": {
+      "max_width": 1700,
+      "max_height": 900,
+      "window_name": "Traffic Monitor",
+      "detection_box": {
+        "color": [
+          0,
+          255,
+          0
+        ],
+        "thickness": 2
+      },
+      "label": {
+        "font": "FONT_HERSHEY_SIMPLEX",
+        "scale": 1.0,
+        "color": [
+          0,
+          199,
+          200
+        ],
+        "thickness": 3,
+        "offset_x": 2,
+        "offset_y": 5
+      },
+      "overlay": {
+        "alpha": 0.2,
+        "background_alpha": 0.8,
+        "corners": {
+          "radius": 5,
+          "color": [
+            0,
+            0,
+            255
+          ],
+          "border_color": [
+            255,
+            255,
+            255
+          ],
+          "border_thickness": 1
+        },
+        "roi_label": {
+          "font": "FONT_HERSHEY_SIMPLEX",
+          "scale": 0.7,
+          "thickness": 2,
+          "offset_y": 10
+        },
+        "counting_line": {
+          "enabled": true,
+          "position": 0.8,
+          "color": [
+            0,
+            0,
+            255
+          ],
+          "thickness": 2,
+          "extend_factor": 0.0
+        }
+      }
+    },
+    "counting": {
+      "enabled": true,
+      "display_stats": true,
+      "stats_position": {
+        "x": 50,
+        "y": 50
+      },
+      "stats_font": {
+        "font": "FONT_HERSHEY_SIMPLEX",
+        "scale": 1.2,
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "thickness": 2,
+        "line_spacing": 35,
+        "background": {
+          "enabled": true,
+          "color": [
+            0,
+            0,
+            0
+          ],
+          "alpha": 0.7,
+          "padding": 10
+        }
+      }
+    },
+    "density": {
+      "before": {
+        "high": 0.7,
+        "low": 0.3,
+        "empty": 0.002
+      },
+      "after": {
+        "high": 0.7,
+        "low": 0.3,
+        "empty": 0.003
+      },
+      "delta": {
+        "high": 0.2,
+        "low": 0.02
+      },
+      "detection_interval": 2.0
+    },
+    "ema_alpha": 0.2,
+    "min_loop_time": 1e-06
+  }
+}

@@ -1,0 +1,39 @@
+# Ultralytics YOLO ByteTrack Hyperparameters
+# File này điều chỉnh cách thuật toán liên kết các hộp nhận diện (bounding boxes) qua từng frame.
+
+tracker_type: bytetrack # Loại tracker (không thay đổi dòng này)
+
+# --- NGƯỠNG TIN CẬY (CONFIDENCE THRESHOLDS) ---
+
+track_high_thresh: 0.5  # Ngưỡng cho các hộp có độ tin cậy cao. 
+                        # Các box trên mức này sẽ được ưu tiên khớp nối (matching) ở bước 1.
+                        # Tăng nếu muốn giảm bớt đối tượng nhiễu.
+
+track_low_thresh: 0.1   # Ngưỡng cho các hộp có độ tin cậy thấp. 
+                        # ByteTrack sử dụng cả các box "yếu" này để bám đuổi khi vật thể bị che khuất.
+                        # Giảm xuống 0.01 nếu muốn bám đuổi cực tốt khi bị vật cản, nhưng dễ bị nhiễu.
+
+new_track_thresh: 0.6   # Ngưỡng để tạo một ID mới. 
+                        # Phải lớn hơn track_high_thresh. Nếu box mới có conf cao hơn mức này, 
+                        # một ID mới (track mới) sẽ được khởi tạo.
+
+# --- QUẢN LÝ THỜI GIAN VÀ BỘ NHỚ (TEMPORAL PARAMETERS) ---
+
+track_buffer: 30        # Số lượng frame (khung hình) tối đa để giữ lại một ID khi mất dấu.
+                        # Nếu object biến mất quá 30 frame, ID đó sẽ bị xóa vĩnh viễn.
+                        # Trên Pi 5, nếu FPS thấp, nên giảm xuống 15-20 để tiết kiệm RAM.
+
+match_thresh: 0.8       # Ngưỡng khớp nối dựa trên chỉ số IoU (Intersection over Union).
+                        # Nếu IoU giữa box dự đoán và box hiện tại thấp hơn mức này, chúng sẽ không được khớp.
+                        # Tăng lên (ví dụ 0.9) nếu muốn khắt khe hơn, tránh việc nhảy ID giữa 2 vật thể sát nhau.
+
+# --- CÁC THAM SỐ NÂNG CAO ---
+
+fuse_score: True        # Kết hợp điểm tin cậy (detection score) vào quá trình tính toán khoảng cách.
+                        # Giúp tăng độ chính xác khi phân biệt các vật thể cùng loại.
+
+# Ghi chú cho Orange Pi 5:
+# Nếu bạn muốn ưu tiên TỐC ĐỘ:
+# - Giảm track_buffer xuống (ví dụ: 10)
+# - Tăng track_high_thresh lên (ví dụ: 0.6)
+# - Tăng match_thresh lên (ví dụ: 0.85) để Kalman Filter không phải tính toán quá nhiều trường hợp trùng lặp.

@@ -1,0 +1,4 @@
+python main.py --prototxt models/MobileNetSSD_deploy.prototxt --weights models/MobileNetSSD_deploy.caffemodel --source "rtsp://admin:abcd1234@192.168.50.107:554/cam/realmonitor?channel=1?subtype=0" --config config.json --fps 10 --core 4 --show
+python main.py --prototxt models/MobileNetSSD_deploy.prototxt --weights models/MobileNetSSD_deploy.caffemodel --source videos/GT2.MP4 --config config.json --fps 10 --core 4 --show
+python cfg.py --source "rtsp://admin:abcd1234@192.168.50.107:554/cam/realmonitor?channel=1?subtype=0"
+"tracker_type": "KCF"  # Thêm dòng này: "CSRT", "KCF", "MOSSE"

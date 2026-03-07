@@ -1,0 +1,173 @@
+{
+    "path": {
+        "input": "rtsp://admin:abcd1234@192.168.50.107:554/cam/realmonitor?channel=1?subtype=0",
+        "output": "../output/output.jpg",
+        "log": "../logs/terminal.txt",
+        "model": {
+            "param": "../models/yolo11n_ncnn_640/model.ncnn.param",
+            "bin": "../models/yolo11n_ncnn_640/model.ncnn.bin"
+        }
+    },
+    "model": {
+        "_threshold": "Ngưỡng tin cậy tối thiểu (0.0 - 1.0) để chấp nhận một detection",
+        "threshold": 0.2,
+        "_nms_threshold": "Ngưỡng IoU (0.0 - 1.0) để loại bỏ các box trùng lặp (Non-Maximum Suppression)",
+        "nms_threshold": 0.5,
+        "_debug_level": "0: Off, 1: Basic (FPS), 2: Standard (Box), 3: Verbose (Rect, Line, Arrow, Count/Rect)",
+        "debug_level": 3,
+        "_tracker_type": "Loại tracker: CUSTOM (nhẹ), MOSSE (nhanh), KCF (chính xác hơn)",
+        "tracker_type": "CUSTOM",
+        "_smoothing_alpha": "Hệ số làm mượt VỊ TRÍ (0-1). Thấp = mượt/trễ, Cao = nhạy/rung",
+        "smoothing_alpha": 0.4,
+        "_smoothing_beta": "Hệ số làm mượt VẬN TỐC (0-1). Thấp = ổn định, Cao = thay đổi nhanh",
+        "smoothing_beta": 0.2,
+        "_smoothing_size": "Hệ số làm mượt KÍCH THƯỚC BOX (0-1). Giúp box không bị co giãn liên tục",
+        "smoothing_size": 0.5,
+        "_smoothing_angle": "Hệ số làm mượt GÓC QUAY (0-1). Giúp hướng không bị đảo liên tục",
+        "smoothing_angle": 0.3,
+        "_history_length": "Số lượng frame quá khứ lưu lại để tính toán tốc độ trung bình (60 frame ~ 2s)",
+        "history_length": 10,
+        "_min_frames": "Số frame tối thiểu cần theo dõi liên tục trước khi hiển thị hướng/tốc độ",
+        "min_frames": 10,
+        "_still_threshold": "Ngưỡng tốc độ (pixel/s) dưới mức này coi là đứng yên",
+        "still_threshold": 40.0,
+        "_perspective_factor": "Hệ số bù trừ phối cảnh (0.0 - 2.0). Tăng tốc độ xe ở xa (phía trên ảnh)",
+        "perspective_factor": 0.8,
+        "_redetect_interval": "Chu kỳ chạy lại detection (số frame). Detection tốn CPU hơn tracking",
+        "redetect_interval": 10,
+        "_numtracker": "Số lượng đối tượng tối đa được theo dõi cùng lúc",
+        "numtracker": 100,
+        "_traffic_light_buffer": "Số frame liên tiếp để xác định trạng thái đèn (Xanh/Đỏ)",
+        "traffic_light_buffer": 20,
+        "class": [
+            "person",
+            "bicycle",
+            "car",
+            "motorbike",
+            "aeroplane",
+            "bus",
+            "train",
+            "truck"
+        ]
+    },
+    "rect": {
+        "active": [
+            1,
+            2,
+            3,
+            4
+        ],
+        "rect1": [
+            [
+                202,
+                176
+            ],
+            [
+                24,
+                189
+            ],
+            [
+                52,
+                488
+            ],
+            [
+                614,
+                482
+            ]
+        ],
+        "rect1_line": [
+            [
+                43,
+                396
+            ],
+            [
+                451,
+                360
+            ]
+        ],
+        "rect2": [
+            [
+                244,
+                34
+            ],
+            [
+                244,
+                91
+            ],
+            [
+                329,
+                88
+            ],
+            [
+                325,
+                40
+            ]
+        ],
+        "rect2_line": [
+            [
+                244,
+                62
+            ],
+            [
+                326,
+                61
+            ]
+        ],
+        "rect3": [
+            [
+                361,
+                30
+            ],
+            [
+                367,
+                93
+            ],
+            [
+                472,
+                84
+            ],
+            [
+                446,
+                25
+            ]
+        ],
+        "rect3_line": [
+            [
+                364,
+                64
+            ],
+            [
+                459,
+                55
+            ]
+        ],
+        "rect4": [
+            [
+                499,
+                21
+            ],
+            [
+                499,
+                83
+            ],
+            [
+                587,
+                80
+            ],
+            [
+                579,
+                32
+            ]
+        ],
+        "rect4_line": [
+            [
+                499,
+                48
+            ],
+            [
+                583,
+                58
+            ]
+        ]
+    }
+}

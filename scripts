@@ -1,0 +1,26 @@
+python -m venv venv
+
+cd nckh/camera_traffic
+source venv/bin/activate
+cd utils
+python3 pt.pt
+# Điểm màu đỏ sẽ là điểm cài đặt nhấn chột vị trí nào trên màn điểm đó sẽ đổi tọa độ tại đó và sẽ chuyển qua điểm tiếp theo theo vòng lặp
+# Nhấn phím số 1 để cài đặt vùng ROI1
+# Nhấn M để chuyển giữa phần cài 4 điểm vùng ROI hay 2 điểm cho Line ngang (Line ngang chỉ cần nhấn chuột gần trị trí 2 cạnh bên của ROI Line sẽ tự bám tọa độ vào 2 cạnh)
+# Nhấn S để lưu config
+# Nhấn Q để thoát chương trình
+cd ..
+cd main
+python3 main.py
+
+source venv/bin/activate
+
+pip install -r requirements.txt
+
+mkdir build
+cd build
+
+git clone https://github.com/KleinYuan/bytetrack-standalone.gi
+
+python3 main.py
+python3 pt.py

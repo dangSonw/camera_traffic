@@ -1,0 +1,14 @@
+__pycache__
+.vscode
+venv/
+logs/
+build/
+rsrc/
+training/
+runs/
+*.pt
+*.caffemodel
+*.prototxt
+output/
+models/
+*.sh
