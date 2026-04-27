@@ -1,15 +1,20 @@
-__pycache__
-.vscode
+# Virtual environment
 lib/
-logs/
-build/
-rsrc/
-training/
-runs/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Model / AI
 *.pt
-*.caffemodel
-*.prototxt
-output/
-models/
-*.sh
-temp/
+*.onnx
+
+# Video / dataset
+*.mp4
+*.avi
+rsrc/
+
+# OS
+.DS_Store
