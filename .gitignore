@@ -12,3 +12,4 @@ runs/
 output/
 models/
 *.sh
+temp/
